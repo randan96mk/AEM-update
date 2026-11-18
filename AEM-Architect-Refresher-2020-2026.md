@@ -31,6 +31,230 @@ Each module follows the same pattern: **2020 (what you knew)** → **Now (2026)*
 | Monitoring | Your own Splunk/AppDynamics agents | Cloud Manager logs, log forwarding via config pipeline, Developer Console |
 | AI | Smart Tags (Sensei) | GenAI: Generate Variations, AI Assistant, Sites Optimizer, agentic AI in AEM |
 
+## Change Catalogue: everything that changed in AEM, 2020 → 2026
+
+This catalogue lists **143 changes** in 12 areas, one line each, with the deployment model it applies to and the module that explains it in depth. Use it as the master checklist: if you can explain every row, you are up to date.
+
+**Applies to**: *Cloud* = AEM as a Cloud Service only; *LTS* = AEM 6.5 LTS on-prem/AMS; *All* = every model; *EDS* = Edge Delivery Services.
+
+| Area | Changes | Rows |
+| --- | --- | --- |
+| A. Platform and deployment models | 18 | 1-18 |
+| B. DevOps and Cloud Manager | 17 | 19-35 |
+| C. Backend coding | 18 | 36-53 |
+| D. Front end and authoring | 15 | 54-68 |
+| E. Edge Delivery Services | 13 | 69-81 |
+| F. Headless | 6 | 82-87 |
+| G. Dispatcher, CDN and security | 11 | 88-98 |
+| H. Assets | 11 | 99-109 |
+| I. Forms | 12 | 110-121 |
+| J. Integrations and extensibility | 9 | 122-130 |
+| K. Migration tooling | 5 | 131-135 |
+| L. Operations and AI | 8 | 136-143 |
+
+### A. Platform and deployment models (architecture)
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 1 | AEM as a Cloud Service became generally available (2020) | Cloud | Cloud-native AEM operated by Adobe; the strategic default | M1 |
+| 2 | Continuous updates replace upgrades (daily maintenance, monthly features, prerelease channel) | Cloud | No upgrade projects; regression testing becomes continuous | M2.4 |
+| 3 | AEM 6.5 LTS released (Mar 2025) with Java 17/21 and refreshed libraries | LTS | The path for clients who stay on-prem or AMS | M1, M12.5 |
+| 4 | Classic AEM 6.5 support end dates (core Feb 2027, extended Feb 2028) | LTS | Clients must plan LTS upgrade or cloud move | M1 |
+| 5 | Containerized architecture on Kubernetes with auto-scaling publish | Cloud | No server sizing; design for disposable pods | M2.1 |
+| 6 | Preview tier added beside author and publish | Cloud | Review content on a publish-like URL before go-live | M2.1 |
+| 7 | Golden master + Sling Content Distribution replace replication agents | Cloud | No agents or queues to configure; no reverse replication | M2.6 |
+| 8 | Immutable `/apps` and `/libs` (composite node store) | Cloud | Code only via pipeline; no CRXDE edits, no overlays | M2.2, M2.6 |
+| 9 | Shared cloud blob store with direct binary access | Cloud | Binaries never pass through the JVM | M2.1, M9.5 |
+| 10 | Adobe-managed CDN (Fastly) included | Cloud | CDN becomes part of your design and config | M8 |
+| 11 | Program/environment model: prod+stage, dev, RDE, sandbox, specialized testing | Cloud | New vocabulary for planning environments | M3.8 |
+| 12 | Additional publish regions (multi-region delivery) | Cloud | Lower latency and regional resilience as an add-on | M13 |
+| 13 | Advanced Networking: flexible egress, dedicated egress IP, VPN | Cloud | How AEM reaches IP-restricted back ends | M2.3, M8.5 |
+| 14 | Self-service restore and Content Copy tool | Cloud | Restore points and prod→lower copies from Cloud Manager | M3.6 |
+| 15 | Sandbox programs that hibernate | Cloud | Cheap trial/POC environments | M13.3 |
+| 16 | Cloud Manager for AMS (classic) vs Cloud Manager for AEMaaCS | All | AMS uses Cloud Manager too, but with VM-based deployment | M1.2 |
+| 17 | Metered licensing (content requests, storage, add-ons) | Cloud | Caching and bot control affect cost | M1.5 |
+| 18 | Java 21 runtime; Java 25 runtime announced (2027) | Cloud | Keep builds and plugins current | M3.3 |
+
+### B. DevOps and Cloud Manager
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 19 | Cloud Manager is the only deployment path | Cloud | No Package Manager/Jenkins deploys of code | M3 |
+| 20 | Full-stack production and non-production pipelines | Cloud | Build → stage → tests → approval → prod | M3.1, M3.8 |
+| 21 | Front-end pipeline | Cloud | Deploy CSS/JS themes in minutes | M3.1, M5.4 |
+| 22 | Web-tier config pipeline | Cloud | Deploy Dispatcher config alone | M3.1 |
+| 23 | Config pipeline (CDN rules, WAF, log forwarding, maintenance, alerts) | Cloud | Operations as code in YAML | M3.1, M8.3 |
+| 24 | Code quality gates (SonarQube + Adobe rules + OakPAL) | Cloud | Critical issues block deployments | M3.2, M3.8 |
+| 25 | Experience audit (Lighthouse) in the pipeline | Cloud | Performance measured on every release | M3.2 |
+| 26 | Custom functional and UI tests (Docker-based) gate production | Cloud | Automated tests are mandatory in practice | M3.8 |
+| 27 | Bring-your-own Git (GitHub, GitLab, Bitbucket, Azure DevOps) | Cloud | Pipelines from the client's repo; PR checks | M3.3, M3.8 |
+| 28 | Environment variables and secrets (`$[env:]`, `$[secret:]`) | Cloud | No secrets in code; per-environment values | M3.3 |
+| 29 | Pipeline (build-time) variables | Cloud | Private Maven repo credentials etc. | M3.8 |
+| 30 | Rapid Development Environments (RDE) | Cloud | Deploy to a cloud env in seconds | M3.4 |
+| 31 | AEM SDK and `aem-sdk-api` dependency replace the uber-jar | Cloud | Local dev matches the cloud release | M3.5 |
+| 32 | Dispatcher SDK tools (`validate.sh`, Docker run) | Cloud | Validate Dispatcher locally exactly as the pipeline does | M3.5, M8.1 |
+| 33 | AEM Analyser Maven plugin | Cloud | Cloud build checks run locally | M3.5 |
+| 34 | Developer Console | Cloud | Read-only view of bundles, configs, queries, CRX | M3.6 |
+| 35 | Adobe I/O CLI plugins (Cloud Manager, RDE, migration) | Cloud | Scriptable operations | M3.8 |
+
+### C. Backend coding
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 36 | Archetype restructured: `ui.apps.structure`, `ui.config`, `ui.frontend`, `all`, `it.tests`, `ui.tests` | All | Standard module layout everyone expects | M4.1 |
+| 37 | Strict package types (`application` / `content` / `container`) | Cloud | Mixed packages fail the build | M4.1 |
+| 38 | OSGi configs as `.cfg.json`; XML `sling:OsgiConfig` unsupported | Cloud (recommended for LTS) | New config file format | M4.2 |
+| 39 | Run modes limited to author/publish + dev/stage/prod | Cloud | Use env vars, secrets, CAC instead of custom run modes | M4.2 |
+| 40 | Repoinit for service users, groups, ACLs, paths | Cloud (also LTS) | No users/ACLs in content packages | M4.3 |
+| 41 | Oak indexes as code: Lucene only, `-custom-n` naming, reindex before switch | Cloud | Index changes deploy safely via pipeline | M4.6 |
+| 42 | Sling Jobs + `scheduler.runOn=SINGLE` for background work | Cloud | Avoid duplicate execution across pods | M4.5 |
+| 43 | Stateless code: no local file persistence, no sticky sessions | Cloud | Pods are disposable | M2.6 |
+| 44 | Limits on long-running requests and heavy traversal queries | Cloud | Make heavy work asynchronous; index every query | M2.6, M4.9 |
+| 45 | Removed/unexported APIs (e.g. Guava, Commons Collections 3) | Cloud, LTS | Refactor old dependencies | M4.7 |
+| 46 | Modern Java (11/17/21): records, text blocks, switch expressions, `var` | Cloud, LTS | Cleaner code; Java 8 builds unsupported | M4.7 |
+| 47 | `Replicator` API backed by Content Distribution; publish to Preview | Cloud | Same API, new mechanism | M4.7 |
+| 48 | Workflows on author only, kept short; transient workflows | Cloud | No heavy processing in workflows | M4.7 |
+| 49 | Outbound HTTP through Advanced Networking proxy (JVM proxy settings, `AEM_*` env vars) | Cloud | Integration code must honour the proxy | M4.9 |
+| 50 | OAuth Server-to-Server replaces JWT service credentials | All Adobe APIs | Update integration auth | M7.3 |
+| 51 | Context-Aware Configuration as the standard for per-site settings | All | Multi-brand without run modes | M4.9 |
+| 52 | Extending Core Components via delegation (`@Via ResourceSuperType`) as standard | All | Never copy Core Components | M4.4 |
+| 53 | Unit testing with AEM Mocks + coverage gate | Cloud | 50% coverage default threshold | M4.9 |
+
+### D. Front end and authoring
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 54 | Core Components matured (Image v3, Teaser, Embed, Tabs, Accordion, Content Fragment, etc.) | All | Build on Core, extend via proxies | M5.1 |
+| 55 | Web-optimized image delivery (WebP/AVIF, resizing) | Cloud | Faster images without Dynamic Media | M5.7 |
+| 56 | Style System as the default for variants | All | One component, many looks | M5.2 |
+| 57 | Static templates legacy; editable templates + policies only | All | Template Editor everywhere | M5.1, M5.7 |
+| 58 | `ui.frontend` webpack/TypeScript build + clientlib generator | All | Modern front-end tooling | M5.3, M5.7 |
+| 59 | Site Templates and Themes | Cloud | Create sites from templates; theme projects | M5.4 |
+| 60 | Adobe Client Data Layer built into Core Components | All | Standard analytics data model | M5.7 |
+| 61 | Universal Editor (framework-agnostic visual editor) | Cloud | Edits HTL, React, Next.js, EDS pages | M5.5, M7.4 |
+| 62 | SPA Editor deprecated for new projects (2025.1.0) | Cloud (6.5 later SPs) | Use Universal Editor for new headless work | M5.5 |
+| 63 | New Content Fragment Editor and Content Fragments console | Cloud | Faster structured authoring | M7.1 |
+| 64 | New admin UIs (Assets view, Experience Cloud unified shell) | Cloud | Different look and navigation for authors | M9.1 |
+| 65 | Accessibility becomes a legal requirement (EU EAA from June 2025, WCAG 2.2) | All | Accessibility testing in every project | M5.7 |
+| 66 | Core Web Vitals focus (INP replaced FID in 2024) | All | Performance targets change | M5.7 |
+| 67 | Machine translation built in; CF translation with references | Cloud | Cheaper translation flows | M11.7 |
+| 68 | MSM rollouts as background jobs | Cloud | Large rollouts don't block authors | M11.7 |
+
+### E. Edge Delivery Services
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 69 | Edge Delivery Services GA (2023, ex-Franklin/Helix) | EDS | New delivery architecture with Lighthouse 100 target | M6 |
+| 70 | Document-based authoring (Google Docs / SharePoint) | EDS | Authors write in Word/Docs | M6.2 |
+| 71 | Document Authoring (da.live) | EDS | Adobe's browser-based doc editor | M6.2 |
+| 72 | Universal Editor authoring on AEM ("xwalk") | EDS + Cloud | WYSIWYG with MSM, workflows, translation | M6.2, M6.8 |
+| 73 | Blocks in vanilla JS/CSS, no build, eager/lazy/delayed loading | EDS | New front-end development model | M6.3, M6.8 |
+| 74 | Code Sync GitHub app, branch previews (`aem.page` / `aem.live`) | EDS | Every branch is an environment | M6.1 |
+| 75 | Sidekick browser extension for preview/publish | EDS | New author workflow | M6.1 |
+| 76 | Spreadsheets as JSON, query index, sitemap, redirects, headers config | EDS | Data and SEO handled by config | M6.5, M6.8 |
+| 77 | Built-in RUM (operational telemetry) | EDS | Real-user CWV for every page | M6.4 |
+| 78 | Built-in experimentation | EDS | Simple A/B tests without Target | M6.5 |
+| 79 | Admin API for automation | EDS | Script preview/publish/status | M6.8 |
+| 80 | EDS sites onboarded in Cloud Manager (domains, CDN) | EDS + Cloud | Single place to manage go-live | M6.5 |
+| 81 | Forms on EDS and Commerce storefront on EDS | EDS | Same performance model for forms and commerce | M6.5, M10, M11.3 |
+
+### F. Headless
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 82 | GraphQL API for Content Fragments GA with persisted queries | Cloud, 6.5 SPs | Cacheable, secure headless delivery | M7.2 |
+| 83 | Richer CF models (references, validation, enums, UI tabs) | Cloud | Better structured content | M7.1, M7.7 |
+| 84 | OpenAPI-based delivery and management APIs (Sites, Assets, Forms) | Cloud | Versioned, documented APIs | M7.3 |
+| 85 | Assets HTTP API support for Content Fragments deprecated | Cloud | Move CF integrations to new APIs | M7.3 |
+| 86 | AEM Headless client SDKs (JS, Java, React) | All | Faster headless app development | M7.2, M7.7 |
+| 87 | Universal Editor replaces SPA Editor for in-context headless editing | Cloud | New hybrid authoring pattern | M7.4 |
+
+### G. Dispatcher, CDN and security
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 88 | Dispatcher cloud format, immutable files, flexible mode | Cloud | Fixed structure validated by Adobe | M8.1, M8.7 |
+| 89 | Automatic Dispatcher invalidation (no flush agents) | Cloud | One less thing to configure | M8.1 |
+| 90 | CDN configuration as code (`cdn.yaml`) | Cloud | Edge rules in Git, deployed in minutes | M8.3, M8.7 |
+| 91 | Traffic filter rules, rate limiting and WAF flags (WAF licensed) | Cloud | Bot and attack protection at the edge | M8.3 |
+| 92 | Edge redirects, origin selectors, request/response transformations, error pages | Cloud | Logic moves from Apache to the CDN | M8.3, M8.7 |
+| 93 | CDN purge API with purge keys | Cloud | Instant invalidation for urgent changes | M8.7 |
+| 94 | Bring-your-own CDN with `X-AEM-Edge-Key` | Cloud | Keep Akamai/Cloudflare in front | M8.2 |
+| 95 | Adobe IMS login for authors (federated SSO) | Cloud | No local/LDAP author users | M8.4 |
+| 96 | Publish-side SAML and OIDC handlers; user sync across pods | Cloud | Customer login on a scaled-out publish tier | M8.4 |
+| 97 | IP allowlists, custom domains and SSL managed in Cloud Manager | Cloud | Self-service network settings | M8.5 |
+| 98 | Enhanced Security / WAF-DDoS Protection add-ons | Cloud | Licensed security tiers | M8.3 |
+
+### H. Assets
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 99 | Asset microservices replace DAM Update Asset processing | Cloud | Renditions and metadata in cloud services | M9.1, M9.5 |
+| 100 | Asset Compute custom workers (App Builder) | Cloud | Custom renditions without JVM code | M9.2, M9.5 |
+| 101 | Post-processing workflows per folder | Cloud | Light customization after processing | M9.1 |
+| 102 | Direct binary upload (`aem-upload`) | Cloud | Fast, scalable uploads | M9.2 |
+| 103 | Assets view (ex Assets Essentials) and Admin view | Cloud | Simplified UI for marketers | M9.1 |
+| 104 | Content Hub for brand-safe asset distribution | Cloud | Self-service portal for approved assets | M9.1 |
+| 105 | Dynamic Media with OpenAPI; Dynamic Media Prime/Ultimate | Cloud | Deliver approved assets anywhere via URNs | M9.1, M9.5 |
+| 106 | Asset Selector micro-frontend | Cloud | Pick AEM assets inside any app | M9.5 |
+| 107 | Bulk Import from S3/Azure | Cloud | Large ingestion without custom scripts | M9.1 |
+| 108 | AI for assets: AI metadata, Firefly generative edits, content credentials | Cloud | Faster tagging and variant creation | M9.1 |
+| 109 | Deeper Workfront and Creative Cloud/Express integration | Cloud | Content supply chain end to end | M9.5 |
+
+### I. Forms
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 110 | AEM Forms as a Cloud Service | Cloud | Forms without on-prem servers | M10.1 |
+| 111 | Adaptive Forms Core Components | Cloud, 6.5 | Modern, accessible, themeable forms | M10.1 |
+| 112 | Headless adaptive forms (JSON + renderers) | Cloud | Same form in web, mobile and SPA | M10.2 |
+| 113 | Forms on EDS, authored in Universal Editor (custom submit actions in 2026) | EDS + Cloud | Fast public forms | M10.1, M10.5 |
+| 114 | Communications APIs, Forms Service APIs, document conversion APIs (2026) | Cloud | Document generation as APIs | M10.1, M10.5 |
+| 115 | New Interactive Communication Editor with FDM data binding (2026) | Cloud | Personalized correspondence authoring | M10.1 |
+| 116 | Automated Forms Conversion Service | Cloud | PDF to adaptive form | M10.1 |
+| 117 | Captcha choices: reCAPTCHA Enterprise, hCaptcha, Turnstile | Cloud | Bot protection options | M10.1 |
+| 118 | New submit targets: Power Automate, SharePoint, OneDrive, Azure Blob, Workfront Fusion, AEP | Cloud | Integrations without custom code | M10.5 |
+| 119 | Forms Manager versioning (2026) | Cloud | Version history for forms, fragments, themes | M10.1 |
+| 120 | AI form authoring by chat; Agentic Form Filling (early access 2026) | Cloud | Faster creation and conversational completion | M10.1, M13.4 |
+| 121 | Forms JEE on 6.5 LTS with Java 17/21 and JBoss EAP 8 | LTS | JEE stays on-prem/AMS only | M10, M12.5 |
+
+### J. Integrations and extensibility
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 122 | App Builder (serverless on Adobe I/O Runtime) | All (mainly Cloud) | Integration logic outside AEM | M11.1, M11.7 |
+| 123 | Adobe I/O Events for AEM Sites and Assets | Cloud | Event-driven integrations | M11.7 |
+| 124 | UI Extensibility for CF console/editor, Universal Editor, Assets view | Cloud | Extend the UI without `/libs` overlays | M11.7 |
+| 125 | API Mesh (GraphQL federation) | All | One API for AEM + Commerce + others | M11.7 |
+| 126 | Adobe Web SDK replaces at.js/AppMeasurement for new builds | All | One data collection library | M11.2, M11.7 |
+| 127 | AEP, Real-Time CDP and Journey Optimizer use AEM content | All | Personalization and journeys with AEM content | M11.2 |
+| 128 | CIF on Cloud Service; Commerce storefront on EDS (drop-ins) | Cloud, EDS | Two commerce patterns | M11.3 |
+| 129 | GenStudio for Performance Marketing on top of AEM Assets | Cloud | AI campaign variants from approved assets | M11.2 |
+| 130 | Product line-up shifts: Screens and Guides on cloud; Communities not on cloud | Cloud | Know what's available where | M11.5 |
+
+### K. Migration tooling
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 131 | Best Practices Analyzer (BPA) | 6.x → Cloud | Finds cloud incompatibilities | M12.2 |
+| 132 | Cloud Acceleration Manager (CAM) | 6.x → Cloud | Guides the whole migration | M12.2 |
+| 133 | Content Transfer Tool with top-ups and pre-copy | 6.x → Cloud | Repeatable content migration | M12.7 |
+| 134 | Repository Modernizer, Index Converter, Dispatcher Converter (aio plugin) | 6.x → Cloud | Automated code restructuring | M12.2 |
+| 135 | AEM Modernize Tools (templates, components, policies) | All | Move from static/foundation to editable/Core | M12.2 |
+
+### L. Operations and AI
+
+| # | Change | Applies to | What it means | See |
+| --- | --- | --- | --- | --- |
+| 136 | Log forwarding (Splunk, Datadog, Elastic, Azure Blob, HTTPS) via config | Cloud | Centralized observability | M13.2 |
+| 137 | CDN logs available and forwardable | Cloud | Edge-level troubleshooting and security analysis | M13.6 |
+| 138 | Maintenance tasks configured as code | Cloud | Version/audit purge policies in Git | M13.3 |
+| 139 | Proactive notifications and alerts (Cloud Manager, config-based alert rules) | Cloud | Faster incident response | M13.2 |
+| 140 | AEM Sites Optimizer (agentic: identify, suggest, auto-fix with PRs) | Cloud, EDS | Continuous SEO/CWV/accessibility fixes | M13.4 |
+| 141 | Adobe LLM Optimizer and Optimize at Edge (GEO) | Cloud, EDS | Visibility in AI answers | M13.4 |
+| 142 | Generate Variations (copy and image variants) | Cloud, EDS | Faster experimentation content | M13.4 |
+| 143 | AI Assistant and agents across AEM | Cloud | Natural-language help and actions for users | M13.4 |
+
 ## Module 1: The big picture (2020 → 2026)
 
 AEM now ships in three forms: AEM as a Cloud Service (the strategic default), AEM 6.5 LTS (on-prem or AMS), and Edge Delivery Services (a delivery and authoring layer that comes with AEM Sites on Cloud Service). Every architecture answer in an interview should start by naming which of these you are designing for and why.
