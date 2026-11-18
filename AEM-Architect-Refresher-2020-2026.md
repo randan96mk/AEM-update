@@ -6,7 +6,7 @@ As of Nov 18, 2026
 
 The single biggest change since 2020: AEM is now a cloud-native, continuously updated product (AEM as a Cloud Service, "AEMaaCS"), with Edge Delivery Services and Universal Editor as the new default for building sites. On-Prem and Adobe Managed Services (AMS) still exist, now on AEM 6.5 LTS.
 
-Each module follows the same pattern: **2020 (what you knew)** → **Now (2026)** → **Architect view** → **Code / config sample** → **Interview angle** → **References**. Read Module 1 and the cheat sheet below first; then go module by module. Module 14 is a rehearsal set of interview questions.
+Each module follows the same pattern: **2020 (what you knew)** → **Now (2026)** → **Architect view** → **Code / config sample** → **Interview angle** → **References**. Each module ends with a \*\*Deep dive (handbook)\*\* section: step-by-step setup, complete config files and code, runbooks, and expert-level answers. Read Module 1 and the cheat sheet below first; then go module by module, overview first, deep dive second. Module 14 is a rehearsal set of interview questions.
 
 ### 2020 vs 2026 cheat sheet
 
@@ -74,6 +74,37 @@ AEM now ships in three forms: AEM as a Cloud Service (the strategic default), AE
 
 **Q: "Is AEM 6.5 dead?"** No. Adobe released AEM 6.5 LTS in 2025 for clients who must stay on-prem or AMS. But new features (EDS, Universal Editor, OpenAPI APIs, GenAI) land first, or only, on Cloud Service.
 
+### 1.5 Deep dive: how to frame platform decisions like an architect
+
+**Weighted decision matrix** (use it live in an interview; scores 1-5, weights agreed with the client):
+
+| Criterion | Weight | AEMaaCS classic | AEMaaCS + EDS | Headless (AEM + Next.js) | 6.5 LTS (AMS) |
+| --- | --- | --- | --- | --- | --- |
+| Time to market | 20% | 3 | 5 | 3 | 2 |
+| Core Web Vitals / performance | 15% | 3 | 5 | 4 | 3 |
+| Author experience (WYSIWYG, governance) | 20% | 5 | 4 | 3 | 5 |
+| Total cost of ownership (ops, upgrades) | 15% | 4 | 5 | 3 | 2 |
+| Reuse of existing code/skills | 15% | 4 | 2 | 2 | 5 |
+| Flexibility for app-like experiences | 15% | 2 | 3 | 5 | 3 |
+
+The numbers are illustrative; the point is to show you make the trade-off explicit and tie it to business weights.
+
+**What Cloud Service changes in the commercial and operating model** (often asked by client leadership):
+
+- Licensing is metered (content requests / page views, storage, authors, add-ons such as Forms, Screens, Dynamic Media, WAF-DDoS Protection, additional publish regions, Enhanced Security). Caching and bot filtering directly reduce counted requests.
+- No upgrade projects: budget moves from "upgrade every 3 years" to "continuous small regression testing". You need automated tests because Adobe updates underneath you.
+- Roles change: no AEM sysadmins; you need a **Cloud Manager Deployment Manager**, a **Business Owner** (approves prod deploys), DevOps for CDN/config pipeline, and an IMS/Admin Console admin.
+- Environment set per program: 1 production + stage pair, several development environments, RDEs, optional specialized test environments; extra publish regions for latency and DR.
+
+**6.5 vs 6.5 LTS: what an LTS upgrade really involves**
+
+- Platform: Java 17/21 instead of 8/11; refreshed Oak, Sling, Felix and third-party libraries; deprecated APIs removed.
+- Your code: recompile for Java 17/21, remove use of removed libraries (e.g. Guava, older Commons), update bundle imports, retest custom Oak queries and indexes, update build plugins.
+- Forms JEE: new JBoss EAP 8 stack; plan it as a separate upgrade track.
+- Approach: clone prod → upgrade on a copy → run regression + performance tests → rehearse the cutover → production upgrade in a maintenance window.
+
+**Expert-level interview answer: "Should this client go to Cloud Service now?"** Answer with conditions, not a yes: *yes if* the customization inventory (BPA) is mostly cloud-compatible, integrations can be reached via egress IP/VPN, data residency fits Adobe regions, and the client accepts continuous updates; *not yet if* they depend on JEE Process Management, unsupported `/libs` overlays they won't refactor, or regulatory hosting constraints. Then propose an interim step (6.5 LTS) with a cloud-readiness backlog.
+
 ### References
 
 - [AEM as a Cloud Service introduction](https://experienceleague.adobe.com/en/docs/experience-manager-cloud-service/content/overview/introduction)
@@ -134,6 +165,47 @@ Consequence: a code package (`ui.apps`) must contain **only** `/apps`; content a
 **Q: "How does content get to the publish tier?"** Author publishes → Sling Content Distribution sends it to Adobe's pipeline service → every publish pod pulls and applies it. New pods start from a golden master and catch up. You do not manage agents or queues.
 
 **Q: "How do you handle user-generated data (e.g. form posts, comments) on publish?"** Not by writing to the publish repository (no reverse replication, and pods are disposable). Use an external store (database, CRM, Adobe Experience Platform), AEM Forms submit actions, or an App Builder action.
+
+### 2.6 Deep dive: how AEMaaCS works internally
+
+**How immutability is implemented: the composite node store.** Each AEM pod mounts its repository as a *composite* of two node stores: a read-only store containing `/apps` and `/libs` (built into the container image at deploy time) and the read-write store for everything else. A write to `/apps` therefore fails at the repository level, not just by policy. This is also why code and content packages must be separated: the code part is applied at image build time, the content part is installed on a running instance.
+
+**Author vs publish storage**
+
+| Tier | Node store | Binaries | Scaling |
+| --- | --- | --- | --- |
+| Author | Document node store (shared database), all author pods share it | Shared cloud blob store | Several pods behind a load balancer; Adobe scales |
+| Publish | Segment node store (local, per pod) | Same shared cloud blob store (no copy of binaries per pod) | Horizontal auto-scaling; pods created from the golden master |
+
+**Content distribution step by step**
+
+1. Author activates (Manage Publication, Quick Publish, workflow, or `Replicator` API).
+2. Sling Content Distribution builds a content package (metadata only; binaries are already in the shared blob store) and sends it to Adobe's pipeline service (a managed message queue).
+3. Every publish pod (and the golden master) consumes the queue and imports the package in order.
+4. Dispatcher cache for affected paths is invalidated on each pod.
+5. A new publish pod is cloned from the golden master and replays queued items it hasn't seen, so it joins fully up to date.
+
+Architecture consequences: publishing very large trees produces large queues (use tree activation via workflow/job, off-peak); the Distribution console in the Developer Console shows queue state; publishing is eventually consistent across pods (milliseconds to seconds).
+
+**Deployments in detail (rolling / blue-green)**
+
+1. Cloud Manager builds your code and merges it with the current AEM release into a new image.
+2. If index definitions changed, new indexes are built in the background on a clone first.
+3. Author: new pods start with the new image; repoinit runs; mutable content packages install; traffic switches; old pods stop.
+4. Publish: a new golden master is prepared, new publish pods start from it, traffic moves gradually, old pods drain.
+5. For a short period **old and new code run side by side** against the same author repository: content structure changes must be backward compatible (add new properties, migrate later; don't rename in place).
+
+**Repoinit and mutable content timing.** Repoinit runs on every startup and is idempotent; mutable content packages (`ui.content`) install on author and publish during deployment. Use `filter.xml` modes carefully: `mode="merge"` or `"update"` for structure you don't want to overwrite on each deploy, because authors may have changed it.
+
+**Statelessness rules (the checklist interviewers like)**
+
+- No in-memory session state relied on across requests (no sticky sessions guarantee).
+- No local file writes expected to persist; `/tmp` is per pod and ephemeral.
+- Caches: in-memory caches per pod are fine if they tolerate inconsistency; otherwise external cache (e.g. Redis via App Builder/managed service) or the repository.
+- Background jobs: Sling Jobs (cluster-aware), and keep them idempotent because pods can be killed during a deployment.
+- Health: long-running requests (> \~60 s) get cut; make heavy operations asynchronous.
+
+**Expert-level interview answer: "What happens when Adobe pushes an update during peak traffic?"** Updates are rolling: new pods with the new image join and pass health checks before old pods drain. Publish traffic is served by the CDN cache and remaining pods throughout. Risk lies in *your* code: backward-incompatible content changes and non-idempotent jobs. Mitigate with custom functional/UI tests in the pipeline (Adobe runs them before promoting) and with the prerelease channel to test upcoming features early.
 
 ### References
 
@@ -228,6 +300,133 @@ aio aem:rde:status
 **Q: "How do you keep secrets out of the repo?"** Cloud Manager secret environment variables referenced in `.cfg.json` with `$[secret:NAME]`, different values per environment, rotated without code changes.
 
 **Q: "Pipeline fails on a code-quality 'critical' issue the business says to ignore."** Criticals can't be overridden by design; fix it. Only 'important' issues can be approved by the Deployment Manager, and you document the decision.
+
+### 3.8 Deep dive (handbook): setting up Cloud Manager end to end
+
+**Step 1: Roles in Admin Console (IMS)**
+
+| Role (product profile) | Can do |
+| --- | --- |
+| Business Owner | Create programs, approve production deployments |
+| Deployment Manager | Create/run pipelines, manage environments, override "important" quality issues |
+| Program Manager | View, schedule, approve; no pipeline config |
+| Developer | Access Git credentials, Developer Console, logs |
+| AEM Administrators / Users (per environment) | Log in to that environment's author with admin or user rights |
+
+Create the profiles per environment in Admin Console, assign the client's IdP groups, and document who approves prod. This is the first thing to set up because it blocks everyone.
+
+**Step 2: Program and environments**
+
+1. Create the program (Sites, Assets, Forms solutions; region; add-ons such as additional publish region, Enhanced Security).
+2. Add Production + Stage, then Development environments (e.g. `dev`, `qa`) and RDEs.
+3. Configure IP allowlists for author/preview (client VPN ranges), custom domains, SSL certificates.
+4. Request Advanced Networking (choose ONE type per program: flexible egress, dedicated egress IP, or VPN) before integration testing starts.
+
+**Step 3: Repository strategy**
+
+- Option A: Adobe-hosted Git as the pipeline source; client Git mirrored into it (`git push adobe main`) from the client's CI (GitHub Actions/Azure DevOps).
+- Option B (preferred now): connect the client's GitHub/GitLab/Bitbucket/Azure DevOps directly as a private repository in Cloud Manager; pipelines can then run on PRs (code-quality checks on pull requests).
+- Branching: `develop` → dev pipeline (on commit), `release/*` → stage/prod pipeline (manual), feature branches → code-quality pipeline or RDE.
+
+**Step 4: The `.cloudmanager` folder (complete example)**
+
+```text
+.cloudmanager/
+  java-version            # 21
+  maven/settings.xml      # private Maven repos (e.g. Nexus/Artifactory)
+```
+
+```xml
+<!-- .cloudmanager/maven/settings.xml -->
+<settings>
+  <servers>
+    <server>
+      <id>myco-nexus</id>
+      <username>${env.CUSTOM_NEXUS_USER}</username>
+      <password>${env.CUSTOM_NEXUS_PASSWORD}</password>
+    </server>
+  </servers>
+  <profiles>
+    <profile>
+      <id>myco-nexus</id>
+      <activation><property><name>env.CM_BUILD</name></property></activation>
+      <repositories>
+        <repository>
+          <id>myco-nexus</id>
+          <url>https://nexus.myco.com/repository/maven-public/</url>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+</settings>
+```
+
+`CUSTOM_NEXUS_PASSWORD` is a **pipeline variable** marked secret (build-time), set via Cloud Manager UI or CLI:
+
+```bash
+aio cloudmanager:set-pipeline-variables <pipelineId> \
+  --variable CUSTOM_NEXUS_USER builduser \
+  --secret CUSTOM_NEXUS_PASSWORD '***'
+```
+
+The nexus host must be reachable from Cloud Manager's build network (public, or allowlisting Adobe build egress per docs).
+
+**Step 5: Environment variables vs pipeline variables**
+
+| Type | Scope | Used in | Example |
+| --- | --- | --- | --- |
+| Pipeline variable (build) | One pipeline, build time | Maven/npm build | Private repo credentials |
+| Environment variable | One environment, runtime | OSGi `$[env:...]`, `$[secret:...]`; config pipeline `${{...}}` | API URLs, keys, log levels |
+
+Values are applied without a code deploy (the environment restarts services). Limit: names in `UPPER_SNAKE_CASE`; secrets never shown after save.
+
+**Step 6: Production pipeline phases (what you'll see in the UI)**
+
+1. Validation (pipeline config, environment state).
+2. Build & unit tests (Maven `clean install` in Adobe's build container; `CM_BUILD=true` env var is set).
+3. Code scanning (Sonar + Adobe rules + OakPAL); artifact preparation (image build).
+4. Deploy to Stage.
+5. Stage testing: product functional tests, custom functional tests (`it.tests`), custom UI tests (`ui.tests`), experience audit (Lighthouse on configured paths).
+6. Approval gate (Business Owner / Deployment Manager) — can be skipped/scheduled.
+7. Deploy to Production (rolling).
+
+A prod pipeline always deploys the same artifact that was tested on stage. Emergency fix path: "execution mode" with emergency/skip-tests options exists but is audited; use only per agreed runbook.
+
+**Step 7: Custom UI tests contract (`ui.tests`)**
+
+- Module builds a Docker image (via `ui.tests` Maven profile) containing the test runner (Cypress, Selenium/WebdriverIO, Playwright).
+- Cloud Manager injects env vars such as `AEM_AUTHOR_URL`, `AEM_AUTHOR_USERNAME`, `AEM_AUTHOR_PASSWORD`, `AEM_PUBLISH_URL`, `REPORTS_PATH`; results must be JUnit XML in `REPORTS_PATH`.
+- Opt in by adding a `testing.properties` file with `ui-tests.version=1` to the build output.
+- Keep tests under \~30 minutes; they gate every production deploy.
+
+**Step 8: Code quality rules you will hit most often**
+
+| Rule (example) | Why | Fix |
+| --- | --- | --- |
+| ResourceResolver not closed | Leaks sessions | try-with-resources |
+| Use of `Thread.sleep` / `System.out` | Blocks, no logs | Async/jobs, SLF4J |
+| HTTP request without timeout | Thread exhaustion | Set connect/read timeouts |
+| Use of deprecated/internal APIs | Breaks on updates | Use public APIs |
+| Mixed package / `/libs` content | Immutable violation | Split packages |
+| Custom index not Lucene / wrong name | Deploy failure | `-custom-n` Lucene index |
+| Overlapping OSGi configs | Ambiguity | One config per PID per run mode |
+| Coverage < threshold (50%) | Quality gate | Unit tests with AEM Mocks |
+
+**Step 9: Day-2 Cloud Manager CLI cheat sheet**
+
+```bash
+npm i -g @adobe/aio-cli
+aio plugins:install @adobe/aio-cli-plugin-cloudmanager
+aio login
+aio cloudmanager:list-programs
+aio cloudmanager:program:list-environments --programId 12345
+aio cloudmanager:pipeline:start-execution <pipelineId>
+aio cloudmanager:environment:tail-log <envId> author aemerror
+aio cloudmanager:environment:download-logs <envId> publish httpdaccess 1
+aio cloudmanager:environment:set-variables <envId> --variable LOG_LEVEL DEBUG
+```
+
+**Expert-level interview answer: "Design CI/CD for 6 scrum teams on one AEM program."** Trunk-based or short-lived branches in the client's GitHub connected to Cloud Manager; PR checks with the code-quality pipeline + local `aemanalyser`; each team gets an RDE for fast loops; shared `dev` pipeline on merge; nightly stage deploy with full UI tests; weekly prod release train with Business Owner approval; front-end pipeline for theme changes and web-tier pipeline for dispatcher; config pipeline owned by the platform team. Feature toggles via environment variables/CAC to decouple deploy from release.
 
 ### References
 
@@ -423,6 +622,211 @@ public class ProductSyncJob implements JobConsumer {
 
 **Q: "How do you add a property to the OOTB asset search index?"** Create `damAssetLucene-<v>-custom-1` with the full definition plus your property, deploy via pipeline; Cloud Manager reindexes before switching.
 
+### 4.9 Deep dive (handbook): complete backend patterns
+
+**A. OSGi service with typed configuration (`@Designate`)**
+
+```java
+@ObjectClassDefinition(name = "My Site - Weather Service")
+public @interface WeatherConfig {
+    @AttributeDefinition(name = "API URL") String apiUrl() default "https://api.example.com";
+    @AttributeDefinition(name = "API key") String apiKey();
+    @AttributeDefinition(name = "Timeout ms") int timeout() default 5000;
+}
+
+@Component(service = WeatherService.class)
+@Designate(ocd = WeatherConfig.class)
+public class WeatherServiceImpl implements WeatherService {
+    private static final Logger LOG = LoggerFactory.getLogger(WeatherServiceImpl.class);
+    private volatile WeatherConfig config;
+    private HttpClient client;
+
+    @Activate @Modified
+    protected void activate(WeatherConfig config) {
+        this.config = config;
+        this.client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(config.timeout()))
+            .build();                       // honours JVM proxy settings set by Advanced Networking
+    }
+
+    @Override
+    public Optional<String> forecast(String city) {
+        var req = HttpRequest.newBuilder(URI.create(config.apiUrl() + "/forecast?city="
+                + URLEncoder.encode(city, StandardCharsets.UTF_8)))
+            .timeout(Duration.ofMillis(config.timeout()))
+            .header("x-api-key", config.apiKey())
+            .GET().build();
+        try {
+            var res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            return res.statusCode() == 200 ? Optional.of(res.body()) : Optional.empty();
+        } catch (IOException e) {
+            LOG.warn("Weather API failed for {}", city, e);
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        }
+    }
+}
+```
+
+The PID is the class name: config file `com.mysite.core.services.impl.WeatherServiceImpl.cfg.json` (values from env vars/secrets as in 3.3).
+
+**Outbound networking notes (Advanced Networking):** for HTTP/HTTPS, AEM sets the standard JVM proxy properties, so clients that honour them route through the egress proxy automatically; Apache HttpClient needs `useSystemProperties()`. Proxy host/port are also exposed as env vars (e.g. `AEM_HTTP_PROXY_HOST`, `AEM_HTTP_PROXY_PORT`, `AEM_HTTPS_PROXY_HOST`, `AEM_HTTPS_PROXY_PORT`); non-HTTP protocols (SMTP, databases) use `AEM_PROXY_HOST` with port forwarding rules declared in the network configuration.
+
+**B. Servlet bound to a resource type (preferred over path)**
+
+```java
+@Component(service = Servlet.class)
+@SlingServletResourceTypes(
+    resourceTypes = "mysite/components/page",
+    selectors = "weather",
+    extensions = "json",
+    methods = HttpConstants.METHOD_GET)
+public class WeatherServlet extends SlingSafeMethodsServlet {
+    @Reference private transient WeatherService weather;
+
+    @Override
+    protected void doGet(SlingHttpServletRequest req, SlingHttpServletResponse res) throws IOException {
+        String city = req.getResource().getValueMap().get("city", "London");
+        res.setContentType("application/json");
+        res.setHeader("Cache-Control", "max-age=300");      // let Dispatcher/CDN cache it
+        res.getWriter().write(weather.forecast(city).orElse("{}"));
+    }
+}
+```
+
+Called as `/content/mysite/en/home.weather.json`: inherits page ACLs, is cacheable, and Dispatcher filters only need to allow the `weather` selector.
+
+**C. Sling filter (e.g. adding security headers or logging)**
+
+```java
+@Component(service = Filter.class, property = {
+    EngineConstants.SLING_FILTER_SCOPE + "=" + EngineConstants.FILTER_SCOPE_REQUEST,
+    EngineConstants.SLING_FILTER_PATTERN + "=/content/mysite/.*",
+    Constants.SERVICE_RANKING + ":Integer=-700"})
+public class RequestTimingFilter implements Filter {
+    private static final Logger LOG = LoggerFactory.getLogger(RequestTimingFilter.class);
+    public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+            throws IOException, ServletException {
+        long start = System.nanoTime();
+        try { chain.doFilter(req, res); }
+        finally {
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            if (ms > 1000) LOG.warn("Slow request {} took {} ms",
+                ((SlingHttpServletRequest) req).getRequestURI(), ms);
+        }
+    }
+    public void init(FilterConfig c) {} public void destroy() {}
+}
+```
+
+**D. Context-Aware Configuration (per-site settings)**
+
+```java
+@Configuration(label = "Site Settings")
+public @interface SiteSettings {
+    String gtmId() default "";
+    String supportEmail() default "support@example.com";
+    boolean enableChat() default false;
+}
+
+// In a Sling Model
+@SlingObject private Resource resource;
+public String getSupportEmail() {
+    ConfigurationBuilder cb = resource.adaptTo(ConfigurationBuilder.class);
+    return cb.as(SiteSettings.class).supportEmail();
+}
+```
+
+The site root points to its config with `sling:configRef=/conf/mysite-uk`; values are stored in `/conf/mysite-uk/sling:configs/com.mysite.core.config.SiteSettings` and inherited from `/conf/mysite` (multi-brand pattern without custom run modes). Register the class with the `Sling-ContextAware-Configuration-Classes` bundle header (the archetype's bnd config does this when you list it).
+
+**E. Reacting to content changes: `ResourceChangeListener`**
+
+```java
+@Component(service = ResourceChangeListener.class, property = {
+    ResourceChangeListener.PATHS + "=glob:/content/mysite/**",
+    ResourceChangeListener.CHANGES + "=ADDED",
+    ResourceChangeListener.CHANGES + "=CHANGED"})
+public class PageChangeListener implements ResourceChangeListener {
+    @Reference private JobManager jobManager;
+    public void onChange(List<ResourceChange> changes) {
+        changes.stream().map(ResourceChange::getPath).distinct()
+            .forEach(p -> jobManager.addJob("mysite/index/page", Map.of("path", p)));
+    }
+}
+```
+
+Keep listeners tiny: hand the work to a Sling Job. Remember it fires on author (and on publish when content arrives); register with a run-mode-specific config or check `SlingSettingsService` if needed.
+
+**F. Custom workflow process step**
+
+```java
+@Component(service = WorkflowProcess.class,
+           property = "process.label=My Site - Notify Legal")
+public class NotifyLegalStep implements WorkflowProcess {
+    @Reference private EmailService email;
+    public void execute(WorkItem item, WorkflowSession session, MetaDataMap args) throws WorkflowException {
+        String payload = item.getWorkflowData().getPayload().toString();
+        String to = args.get("PROCESS_ARGS", "legal@example.com");
+        email.send(to, "Review needed", "Please review " + payload);
+    }
+}
+```
+
+Workflow models live in `/conf/global/settings/workflow/models` (editable) and are deployed via `ui.content`; runtime models are in `/var/workflow/models`. Purge workflow instances regularly (maintenance task).
+
+**G. Queries that don't kill the repository**
+
+- Always have an index for the query (check with Developer Console → Queries → Explain). Traversal warnings in `error.log` = missing index.
+- Prefer JCR-SQL2 with a path restriction and a node type that matches the index rule.
+- Set limits; with QueryBuilder use `p.guessTotal=true` and `p.limit`.
+- Oak aborts queries that read too many nodes (default limit \~100,000) on Cloud Service: design for it.
+
+```java
+String q = "SELECT * FROM [cq:PageContent] AS c "
+         + "WHERE ISDESCENDANTNODE(c, '/content/mysite') AND c.[articleType] = 'news' "
+         + "ORDER BY c.[jcr:created] DESC";
+Iterator<Resource> it = resolver.findResources(q, Query.JCR_SQL2);
+// read only the first N results
+```
+
+**H. Unit tests with AEM Mocks (JUnit 5)**
+
+```java
+@ExtendWith(AemContextExtension.class)
+class TeaserImplTest {
+    private final AemContext ctx = new AemContext(ResourceResolverType.JCR_MOCK);
+
+    @BeforeEach
+    void setUp() {
+        ctx.registerService(LinkService.class, url -> "https://www.example.com" + url);
+        ctx.addModelsForClasses(TeaserImpl.class);
+        ctx.create().resource("/content/teaser",
+            "sling:resourceType", "mysite/components/teaser",
+            "title", "Hello", "linkURL", "/en/home");
+        ctx.currentResource("/content/teaser");
+    }
+
+    @Test
+    void returnsTitleAndExternalLink() {
+        Teaser t = ctx.request().adaptTo(Teaser.class);
+        assertEquals("Hello", t.getTitle());
+        assertEquals("https://www.example.com/en/home", t.getLink());
+    }
+}
+```
+
+Dependency: `io.wcm:io.wcm.testing.aem-mock.junit5` (test scope). Coverage from these tests feeds the 50% gate.
+
+**I. Logging properly**
+
+- One logger config per package in `ui.config` (example in 4.2); `DEBUG` only on dev via env var.
+- Never log PII or secrets; Cloud Service logs may be forwarded to many systems.
+- Use parameterized logging (`LOG.info("x {}", y)`), no string concatenation.
+
+**Expert-level interview answer: "Review this code: a Sling Model opens a service ResourceResolver in `@PostConstruct` and stores it in a field."** It leaks a session per request (never closed), runs with service-user rights for every visitor (privilege issue), and is not thread-safe if cached. Fix: use the request's resolver for reads the visitor is allowed to do; if elevated access is truly needed, open the service resolver in try-with-resources inside an OSGi service method and return plain data.
+
 ### References
 
 - [AEM Project Archetype (GitHub)](https://github.com/adobe/aem-project-archetype)
@@ -503,6 +907,101 @@ The Maven build runs `npm` through `frontend-maven-plugin`, so the Cloud Manager
 **Q: "Authors want 5 variations of a teaser. Five components?"** No: one proxy of the Core Teaser, five Style System classes in the policy, CSS in `ui.frontend`. Less code, consistent analytics and accessibility.
 
 **Q: "Front-end team works in React and dislikes HTL. Options?"** (a) Headless React app with AEM GraphQL/OpenAPI + Universal Editor; (b) EDS with vanilla JS blocks; (c) keep HTL but give them a theme project + front-end pipeline. Choose based on authoring needs and performance targets.
+
+### 5.7 Deep dive (handbook): building the classic front end properly
+
+**A. Editable template anatomy** (in `/conf/mysite/settings/wcm/templates/<template>`)
+
+| Node | Purpose |
+| --- | --- |
+| `structure` | Locked layout (header XF, footer XF, main container); authors can't remove it |
+| `initial` | Content copied into every new page (unlocked components) |
+| `policies` | Maps each component/container to a policy (allowed components, styles, settings) |
+| `thumbnail.png`, `jcr:content` (status) | Template must be *enabled* to be used |
+| Template type (`/conf/mysite/settings/wcm/template-types`) | Blueprint for templates, created by developers |
+
+Policies live in `/conf/mysite/settings/wcm/policies/...` and are shared between templates. Allowed templates for a site are set via `cq:allowedTemplates` on the site root. Ship template types and initial templates via `ui.content`, let template authors (a power-user group) create the rest in Template Editor.
+
+**B. Clientlibs: the full picture**
+
+```text
+ui.frontend/src/main/webpack/
+  site/main.scss, main.ts
+  components/teaser/_teaser.scss
+ui.frontend/clientlib.config.js     # aem-clientlib-generator config
+→ generates ui.apps/.../clientlibs/clientlib-site (css.txt, js.txt, resources/)
+→ and clientlib-dependencies (vendor bundles)
+```
+
+```js
+// ui.frontend/clientlib.config.js (shortened)
+module.exports = {
+  context: __dirname,
+  clientLibRoot: '../ui.apps/src/main/content/jcr_root/apps/mysite/clientlibs',
+  libs: [{
+    name: 'clientlib-site',
+    allowProxy: true,                 // serve via /etc.clientlibs (publish can't read /apps)
+    categories: ['mysite.site'],
+    dependencies: ['mysite.dependencies'],
+    serializationFormat: 'xml',
+    assets: { js: ['dist/clientlib-site/*.js'], css: ['dist/clientlib-site/*.css'],
+              resources: { cwd: 'dist/clientlib-site', files: ['**/*.*'], flatten: false, ignore: ['**/*.js', '**/*.css'] } }
+  }]
+};
+```
+
+Loading: the Core **Page** component's page policy lists which clientlib categories load in `<head>` (CSS) and at the end of `<body>`, with *async/defer* options for JS. Versioned clientlib URLs (`.lc-<hash>-lc.min.js`, via the Versioned ClientLibs/"long cache" feature built into Cloud Service) let you cache them for a year at the CDN.
+
+**C. Adobe Client Data Layer (ACDL)**
+
+Core Components push component data and events automatically when the data layer is enabled via context-aware config (`/conf/mysite/sling:configs/com.adobe.cq.wcm.core.components.internal.DataLayerConfig` with `enabled=true`).
+
+```js
+// Listen in Adobe Tags or your own JS
+window.adobeDataLayer = window.adobeDataLayer || [];
+window.adobeDataLayer.push((dl) => {
+  dl.addEventListener('cmp:click', (event) => {
+    const id = event.eventInfo.path.split('.').pop();
+    const component = dl.getState(event.eventInfo.path);
+    console.log('clicked', id, component['dc:title']);
+  });
+});
+// Push your own event
+window.adobeDataLayer.push({ event: 'form:submitted', eventInfo: { formId: 'newsletter' } });
+```
+
+Custom components join the data layer by implementing `getData()` with `ComponentData` (via `DataLayerBuilder`) in the Sling Model and rendering `data-cmp-data-layer="${model.data.json}"` in HTL.
+
+**D. Images: web-optimized delivery**
+
+- Enable on the Image component policy ("Enable web optimized images"); Core Image v3 then renders `srcset` URLs served by AEM's image delivery (on the CDN side), converting to WebP/AVIF and resizing per width.
+- Configure widths in the policy (e.g. 320, 640, 960, 1280, 1920); set `loading="lazy"` except the LCP hero (mark it as not lazy).
+- Dynamic Media alternative: smart crop renditions and DM URLs (licensed).
+
+**E. Responsive grid and layout**
+
+- Breakpoints are defined in the template's `cq:responsive` node (phone, tablet, desktop widths); the Layout Container generates `aem-GridColumn--default--6` style classes.
+- Include the `responsivegrid` LESS/SCSS (from the archetype) in your site CSS; designers often replace the grid with their design-system grid and keep AEM's class names.
+
+**F. i18n and dictionaries**
+
+- UI strings in HTL use `${'Read more' @ i18n}`; dictionaries in `/apps/mysite/i18n/<lang>.json` (code) or managed by authors in `/content/dictionaries` via the Translator UI (content, translatable via TIF).
+- Locale comes from the page language (`jcr:language` on the language root).
+
+**G. Accessibility and quality (expected by clients in 2026)**
+
+- Target WCAG 2.2 AA (EU European Accessibility Act in force since June 2025 makes this a legal requirement for many sites).
+- Core Components are built accessible; your CSS and custom components must keep focus states, contrast, ARIA labels.
+- Automate: axe checks in `ui.tests`, Lighthouse in the experience audit, manual screen-reader testing on key journeys.
+
+**H. Front-end pipeline theme (detailed workflow)**
+
+1. Download the theme sources from the site (Sites console → site → "Download theme sources") or start from Adobe's standard site theme.
+2. Configure `.env` with the AEM environment URL and site path, run `npm install` and `npm run live`: a local proxy serves pages from the cloud environment with your local CSS/JS.
+3. Commit to the theme repo/folder; the **front-end pipeline** runs `npm run build` and deploys the `dist` output; the site's theme reference is updated so pages load the new version.
+4. Combine with the full-stack pipeline: back end changes go through full-stack; theme changes go through front-end pipeline; don't put the same files in both.
+
+**Expert-level interview answer: "LCP on the home page is 4.2 s on mobile. Walk me through it."** Measure with RUM/CrUX first, then Lighthouse. Typical AEM causes: hero image lazy-loaded or too large (fix: not lazy, `fetchpriority=high`, web-optimized widths), render-blocking CSS/JS in head (split critical CSS, defer JS, move Adobe Tags/Target to async with anti-flicker scope limited), web fonts (preload, `font-display: swap`), uncached HTML (CDN TTL, `stale-while-revalidate`), heavy third-party tags. Verify in the Cloud Manager experience audit and Sites Optimizer; if the site is marketing-led, propose EDS for the next phase.
 
 ### References
 
@@ -605,6 +1104,177 @@ For Universal Editor (xwalk) projects you also define the block's authoring mode
 **Q: "Can EDS and classic AEM coexist on one domain?"** Yes. Route paths at the CDN (origin selectors): `/blog/*` to EDS, the rest to AEM publish. This is the common incremental migration pattern.
 
 **Q: "Where does personalization go?"** Adobe Target / Web SDK loaded in the right phase, EDS experimentation for simple tests, or edge-side logic. Keep LCP unaffected.
+
+### 6.8 Deep dive (handbook): building an EDS project end to end
+
+**Step 1: Create the project**
+
+1. On GitHub: "Use this template" from `adobe/aem-boilerplate` (document authoring) or `adobe-rnd/aem-boilerplate-xwalk` (Universal Editor/AEM authoring).
+2. Install the **AEM Code Sync** GitHub app on the repo.
+3. Point content at the source in `fstab.yaml` (or via the configuration service for newer setups):
+
+```yaml
+# fstab.yaml — document-based (SharePoint) example
+mountpoints:
+  /: https://myco.sharepoint.com/sites/web/Shared%20Documents/website
+
+# AEM authoring (xwalk) example
+mountpoints:
+  /:
+    url: "https://author-p123-e456.adobeaemcloud.com/bin/franklin.delivery/myorg/mysite/main"
+    type: "markup"
+    suffix: ".html"
+```
+
+4. Local dev: `npm i -g @adobe/aem-cli` then `aem up` — serves your local code against the remote preview content at `http://localhost:3000`.
+5. Install the **Sidekick** extension for authors; configure it for the project.
+
+**Step 2: Understand the three "buses"**
+
+| Bus | Holds | Updated by |
+| --- | --- | --- |
+| Code bus | JS, CSS, icons, config from GitHub | Code Sync app on every push |
+| Content bus | Converted content (markdown → HTML) | Preview/publish from Sidekick, UE or Admin API |
+| Media bus | Images/videos extracted from content, content-addressed (hash URLs) | Preview of content |
+
+The HTML pipeline renders a page as `<header>`, `<main>` with `<div>` sections, blocks as `<div class="blockname variant">`, and `<footer>`; `head.html` from the repo is injected into every page.
+
+**Step 3: Page lifecycle in `scripts/scripts.js`**
+
+```js
+import { decorateBlocks, decorateSections, decorateIcons, decorateButtons,
+  loadSection, loadSections, loadHeader, loadFooter, loadCSS, waitForFirstImage,
+  buildBlock, sampleRUM } from './aem.js';
+
+function buildAutoBlocks(main) {
+  // e.g. turn the first picture + h1 into a hero block automatically
+  const h1 = main.querySelector('h1');
+  const picture = main.querySelector('picture');
+  if (h1 && picture && (h1.compareDocumentPosition(picture) & Node.DOCUMENT_POSITION_PRECEDING)) {
+    const section = document.createElement('div');
+    section.append(buildBlock('hero', { elems: [picture, h1] }));
+    main.prepend(section);
+  }
+}
+
+export function decorateMain(main) {
+  decorateButtons(main); decorateIcons(main);
+  buildAutoBlocks(main); decorateSections(main); decorateBlocks(main);
+}
+
+async function loadEager(doc) {               // only what LCP needs
+  document.documentElement.lang = 'en';
+  const main = doc.querySelector('main');
+  if (main) {
+    decorateMain(main);
+    document.body.classList.add('appear');
+    await loadSection(main.querySelector('.section'), waitForFirstImage);
+  }
+}
+
+async function loadLazy(doc) {                // rest of the page
+  await loadSections(doc.querySelector('main'));
+  loadHeader(doc.querySelector('header'));
+  loadFooter(doc.querySelector('footer'));
+  loadCSS(`${window.hlx.codeBasePath}/styles/lazy-styles.css`);
+}
+
+function loadDelayed() {                      // martech, chat, etc.
+  window.setTimeout(() => import('./delayed.js'), 3000);
+}
+
+async function loadPage() {
+  await loadEager(document);
+  await loadLazy(document);
+  loadDelayed();
+}
+loadPage();
+```
+
+(Function names follow the current boilerplate's `aem.js`; check the version in your repo.)
+
+**Step 4: Authoring conventions authors must learn (document-based)**
+
+- **Block** = a table whose first row is the block name: `Cards`, variants in brackets `Cards (dark, wide)` → `class="cards dark wide"`.
+- **Section** = content between horizontal rules (`---`); **Section Metadata** table sets section styles.
+- **Metadata** table at the bottom of the doc: Title, Description, Image, Template, Theme, Keywords.
+- **Fragments**: reusable content (e.g. `/fragments/promo`) embedded with a fragment block.
+- **Links** to YouTube, forms, etc. are auto-blocked into embeds.
+
+**Step 5: Universal Editor (xwalk) block models**
+
+```json
+// component-definition.json (part)
+{ "groups": [{ "title": "Blocks", "id": "blocks", "components": [{
+  "title": "Hero", "id": "hero",
+  "plugins": { "xwalk": { "page": {
+    "resourceType": "core/franklin/components/block/v1/block",
+    "template": { "name": "Hero", "model": "hero" } } } } }] }] }
+```
+
+```json
+// component-models.json (part)
+[{ "id": "hero", "fields": [
+  { "component": "reference", "valueType": "string", "name": "image", "label": "Image", "multi": false },
+  { "component": "text", "valueType": "string", "name": "imageAlt", "label": "Alt text" },
+  { "component": "richtext", "valueType": "string", "name": "text", "label": "Text" }
+] }]
+```
+
+`component-filters.json` restricts which blocks can be added where (e.g. only `cards-item` inside `cards`). Content is stored as AEM pages in `/content/mysite`, so MSM, translation, workflows and permissions all work.
+
+**Step 6: Indexing, sitemap, redirects, headers**
+
+```yaml
+# helix-query.yaml
+version: 1
+indices:
+  blog:
+    include: ['/blog/**']
+    exclude: ['/blog/drafts/**']
+    target: /blog/query-index.json
+    properties:
+      title:
+        select: head > meta[property="og:title"]
+        value: attribute(el, "content")
+      image:
+        select: head > meta[property="og:image"]
+        value: match(attribute(el, "content"), "https:\/\/[^/]+(/.*)")
+      lastModified:
+        select: none
+        value: parseTimestamp(headers["last-modified"], "ddd, DD MMM YYYY hh:mm:ss GMT")
+```
+
+- **Sitemap**: `helix-sitemap.yaml` generates `sitemap.xml` from the index (multi-language supported with hreflang).
+- **Redirects**: a `redirects` spreadsheet (Source, Destination) → 301s at the edge.
+- **Headers**: custom HTTP headers (CSP, CORS) per path via the headers configuration.
+- **robots.txt**: from the repo or config.
+
+**Step 7: Automate with the Admin API**
+
+```bash
+# Preview, then publish a page programmatically (e.g. from a CMS migration script)
+curl -X POST "https://admin.hlx.page/preview/myorg/mysite/main/blog/hello" -H "Authorization: token $TOKEN"
+curl -X POST "https://admin.hlx.page/live/myorg/mysite/main/blog/hello"    -H "Authorization: token $TOKEN"
+# Check status
+curl "https://admin.hlx.page/status/myorg/mysite/main/blog/hello"
+```
+
+**Step 8: Production CDN and go-live**
+
+- Either the Adobe-managed CDN (onboard the EDS site in Cloud Manager, add domain + certificate) or BYO CDN (Fastly, Akamai, Cloudflare, CloudFront) pointing to `main--mysite--myorg.aem.live` with the documented config.
+- Configure **push invalidation** so publishing purges your CDN instantly (credentials for your CDN stored in the project config).
+- Site authentication: protect preview/live with token-based auth if the site or a section is not public.
+- Go-live checklist: redirects from the old site, sitemap submitted, canonical URLs, 404 page, analytics in delayed phase, RUM enabled, Lighthouse 100 on key templates on mobile.
+
+**Step 9: Quality and team workflow**
+
+- Each PR gets a branch preview URL (`https://<branch>--mysite--myorg.aem.page`) and an automatic PSI check from the bot; merge only when green.
+- ESLint (airbnb-base) and Stylelint ship with the boilerplate; add unit tests for complex blocks.
+- Block library: start from the Block Collection, keep blocks small and content-driven; avoid client-side frameworks.
+- RUM explorer (operational telemetry) for CWV, 404s, top pages, experiment results.
+
+**Expert-level interview answer: "How would you migrate a 2,000-page classic AEM site to EDS?"** Inventory templates/components → map them to blocks (aim for \~20-40 blocks) → choose authoring (UE xwalk if they rely on MSM/translation/workflows) → build blocks and auto-blocking → import content with the AEM importer/Admin API or, for xwalk, by restructuring pages to block components → route sections progressively at the CDN (origin selectors: migrated paths to EDS, rest to AEM publish) → redirects, SEO parity checks, RUM comparison → cut over remaining paths and decommission the old templates.
 
 ### References
 
@@ -715,6 +1385,137 @@ The Universal Editor (UE) is a visual editor hosted by Adobe that loads *your* f
 **Q: "Headless or EDS or classic for a new site?"** Classic/EDS if marketers own pages and need WYSIWYG; headless if the experience is an app (complex state, logged-in, multi-channel) and the front-end team owns rendering. Universal Editor reduces the authoring gap of headless.
 
 **Q: "How do you secure a headless API?"** Publish is public by default for persisted queries; restrict with CUG/permissions plus token auth for private content, CORS allow-list, Dispatcher filters for `/graphql/execute.json/*` only, and block the raw `/content/graphql/global/endpoint.json` POST on publish if not needed.
+
+### 7.7 Deep dive (handbook): headless end to end
+
+**Step 1: Configuration and models**
+
+1. Tools → Configuration Browser → create `/conf/mysite` with *Content Fragment Models* and *GraphQL Persistent Queries* enabled.
+2. Apply the config to the DAM folder (`/content/dam/mysite` → Properties → Cloud Configuration).
+3. Create models. Modelling rules of thumb:
+
+| Rule | Why |
+| --- | --- |
+| Model by *content*, not by page layout (Article, Author, Product, Offer) | Reuse across channels |
+| Use fragment references for relations, keep depth ≤ 3 | Query performance and author clarity |
+| Use enumerations and validation (regex, required, unique) | Data quality |
+| Separate translatable from non-translatable fields | Translation cost |
+| Add a `slug` and use it for lookups instead of paths | Stable URLs across restructures |
+| Use variations only for channel-specific text (e.g. short vs long) | Not for languages (use language copies) |
+
+4. Create the GraphQL endpoint for `/conf/mysite` (Tools → GraphQL). Endpoint URL: `/content/_cq_graphql/mysite/endpoint.json`.
+
+**Step 2: GraphQL features you'll use**
+
+```graphql
+# Paginated list with filter, sort, locale and references
+query Articles($cursor: String, $category: String) {
+  articlePaginated(
+    first: 10, after: $cursor, sort: "publishDate DESC",
+    filter: { category: { _expressions: [{ value: $category, _operator: EQUALS }] } }
+  ) {
+    edges { cursor node { _path title slug publishDate
+      heroImage { ... on ImageRef { _dynamicUrl width height } }
+      author { name } } }
+    pageInfo { endCursor hasNextPage }
+  }
+}
+
+# Single item by path, a variation, with all references
+query ArticleByPath($path: String!) {
+  articleByPath(_path: $path, variation: "summary") {
+    item { title body { html plaintext } }
+    _references { ... on ImageRef { _path _dynamicUrl } }
+  }
+}
+```
+
+Language: put language copies under `/content/dam/mysite/en`, `/de`, and filter by path or use the locale argument on list queries.
+
+**Step 3: Persist with cache headers**
+
+```bash
+curl -u "$USER:$PASS" -X PUT \
+  "https://author-p123-e456.adobeaemcloud.com/graphql/persist.json/mysite/articles" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "query Articles($cursor:String,$category:String){ ... }",
+    "cache-control":   { "max-age": 300 },
+    "surrogate-control": { "max-age": 3600, "stale-while-revalidate": 86400, "stale-if-error": 86400 }
+  }'
+```
+
+Publish the persisted query (it's content under `/conf`) via replication or package; manage queries in the GraphiQL IDE in AEM, which can also publish them. Call: `GET /graphql/execute.json/mysite/articles;category=news;cursor=...` (variables are matrix parameters, URL-encoded).
+
+**Step 4: CORS and Dispatcher**
+
+```json
+// ui.config/.../config.publish/com.adobe.granite.cors.impl.CORSPolicyImpl~mysite-graphql.cfg.json
+{
+  "alloworigin": ["https://www.mysite.com"],
+  "alloworiginregexp": ["http://localhost:.*"],
+  "allowedpaths": ["/graphql/execute.json/.*", "/content/_cq_graphql/mysite/endpoint.json"],
+  "supportedheaders": ["Origin", "Accept", "Content-Type", "Authorization"],
+  "supportedmethods": ["GET", "HEAD", "OPTIONS"],
+  "maxage:Integer": 1800,
+  "supportscredentials": false
+}
+```
+
+Dispatcher: allow `GET /graphql/execute.json/*`, pass the `Origin` header in `clientheaders.any`, cache the responses (and include `Origin` in cache variation if needed), deny POST to the endpoint on publish unless required.
+
+**Step 5: Next.js app with on-demand revalidation**
+
+```js
+// lib/aem.js
+import AEMHeadless from '@adobe/aem-headless-client-js';
+export const aem = new AEMHeadless({
+  serviceURL: process.env.AEM_PUBLISH_URL,
+  endpoint: '/content/_cq_graphql/mysite/endpoint.json',
+  fetch,
+});
+
+// app/articles/[slug]/page.js  (App Router)
+import { aem } from '@/lib/aem';
+export const revalidate = 3600; // ISR fallback
+export default async function Article({ params }) {
+  const { data } = await aem.runPersistedQuery('mysite/article-by-slug', { slug: params.slug });
+  const a = data.articleList.items[0];
+  return (
+    <article data-aue-resource={`urn:aemconnection:${a._path}/jcr:content/data/master`}
+             data-aue-type="reference" data-aue-label="Article">
+      <h1 data-aue-prop="title" data-aue-type="text">{a.title}</h1>
+      <div data-aue-prop="body" data-aue-type="richtext"
+           dangerouslySetInnerHTML={{ __html: a.body.html }} />
+    </article>
+  );
+}
+
+// app/api/revalidate/route.js — called by an App Builder action on AEM "CF published" events
+import { revalidatePath } from 'next/cache';
+export async function POST(req) {
+  if (req.headers.get('x-secret') !== process.env.REVALIDATE_SECRET) return new Response('no', { status: 401 });
+  const { slug } = await req.json();
+  revalidatePath(`/articles/${slug}`);
+  return Response.json({ revalidated: true });
+}
+```
+
+Flow: author publishes CF → AEM emits an I/O event → App Builder action calls `/api/revalidate` → page is regenerated in seconds; the CDN TTL covers the rest.
+
+**Step 6: Preview and private content**
+
+- Authors preview against the **Preview tier** (`preview-p123-e456...`) or author with a token; the headless app reads an env var to switch endpoints (`AEM_PREVIEW_URL`) in a draft-mode route.
+- Private content: protect folders with CUG on publish, call with a bearer token from a technical account in server-side code only; never expose tokens to the browser; disable CDN caching for authenticated responses or vary by auth.
+
+**Step 7: Universal Editor details**
+
+- Add the connection meta tag and the UE `cors.js` only in the editing context (e.g. when `?aue` or a preview flag is present) to keep production pages clean.
+- Define component definitions/models/filters JSON (same format as EDS xwalk, 6.8 step 5) so authors can add/reorder components, not just edit text.
+- Authors open the app in UE from the AEM Sites/CF console; their IMS login is used to write to AEM.
+- Extensions: custom properties panel, custom field types via UI Extensibility.
+
+**Expert-level interview answer: "How do you avoid the N+1 query problem in headless AEM?"** Model references so one persisted query returns the whole view (with `_references` or nested fields), cap depth, use pagination with cursors, and cache per query at the CDN. For listing + detail, use two persisted queries rather than one per item. For extreme fan-out, precompute a JSON (e.g. an App Builder job writing to a CDN-cached endpoint or the EDS index pattern).
 
 ### References
 
@@ -834,6 +1635,131 @@ Start WAF/rate rules in `action: log` mode, watch CDN logs (forwarded to Splunk 
 
 **Q: "Client wants to keep Akamai."** Fine: Akamai → Adobe CDN, with `X-Forwarded-Host` and `X-AEM-Edge-Key`. Agree who owns WAF and TTLs to avoid double rules.
 
+### 8.7 Deep dive (handbook): caching and edge security, complete
+
+**A. Farm file (shortened, cloud format)**
+
+```text
+/mysitepublishfarm {
+  /clientheaders { $include "../clientheaders/clientheaders.any" }
+  /virtualhosts  { $include "../virtualhosts/mysite.vhosts.any" }
+  /renders       { $include "../renders/default_renders.any" }
+  /filter        { $include "../filters/filters.any" }
+  /cache {
+    /docroot "${DOCROOT}"
+    /statfileslevel "2"            # invalidation granularity: /content/mysite/<lang>
+    /rules { $include "../cache/rules.any" }
+    /invalidate { $include "../cache/default_invalidate.any" }
+    /ignoreUrlParams {
+      /0001 { /glob "*" /type "deny" }        # params make a request uncacheable...
+      $include "../cache/marketing_query_parameters.any"   # ...except utm_*, gclid etc.
+    }
+    /headers { "Cache-Control" "Surrogate-Control" "Expires" "Last-Modified" "Content-Type" "Content-Disposition" }
+    /gracePeriod "2"
+    /enableTTL "1"                 # respect Cache-Control max-age from AEM
+  }
+}
+```
+
+**Key cache concepts to explain:**
+
+| Concept | Meaning | Typical choice |
+| --- | --- | --- |
+| `statfileslevel` | Depth of `.stat` files; an activation invalidates only files below that level's folder | 2-3 for multi-site/multi-language, so publishing in `/en` doesn't flush `/de` |
+| Auto-invalidation | `.html`, `.json` etc. older than the `.stat` file are re-fetched | Default on |
+| `ignoreUrlParams` | Which params are ignored for cache key | Ignore marketing params, deny others |
+| `/enableTTL` | Dispatcher expires files using HTTP headers | On, combined with CDN TTL |
+| `gracePeriod` | Serve stale content shortly after invalidation | 2 s to absorb invalidation bursts |
+
+**B. Cache headers in the vhost**
+
+```apache
+<LocationMatch "^/content/.*\.html$">
+  Header set Cache-Control "max-age=300,stale-while-revalidate=43200,stale-if-error=43200"
+  Header set Surrogate-Control "max-age=3600"
+  Header set Age 0
+</LocationMatch>
+<LocationMatch "^/etc\.clientlibs/.*\.(?i:js|css|ttf|woff2)$">
+  Header set Cache-Control "max-age=31536000,immutable"
+</LocationMatch>
+<LocationMatch "^/content/dam/.*\.(?i:jpeg|jpg|png|gif|svg|webp|avif)$">
+  Header set Cache-Control "max-age=86400,stale-while-revalidate=43200"
+</LocationMatch>
+# Security headers
+Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Content-Security-Policy "frame-ancestors 'self'"
+```
+
+`Cache-Control` max-age applies to the browser (and the CDN if no `Surrogate-Control`); `Surrogate-Control` applies only to the CDN and is stripped before the browser. That lets you cache longer at the edge (purged on publish) and shorter in browsers.
+
+**C. URL design: short URLs and vanity URLs**
+
+- Rewrite `/en/products.html` → `/content/mysite/en/products.html` in Apache (`RewriteRule ^/(.*)$ /content/mysite/$1 [PT,L]` with conditions), and the reverse mapping in Sling (`/etc/map` or resource resolver mapping config) so links are generated short.
+- Prefer extensionless URLs only if your rewrite rules and cache keys are consistent.
+- `sling:vanityPath` works, but at scale keep vanity/redirect maps at the CDN (`cdn.yaml` redirects or Apache `RewriteMap` from a file) for performance.
+
+**D. Full `cdn.yaml` features (beyond 8.3)**
+
+```yaml
+kind: "CDN"
+version: "1"
+metadata:
+  envTypes: ["prod"]
+data:
+  authentication:
+    authenticators:
+      - name: purge-auth
+        type: purge
+        purgeKey1: ${{CDN_PURGE_KEY_1}}
+        purgeKey2: ${{CDN_PURGE_KEY_2}}     # two keys allow rotation
+      - name: edge-auth
+        type: edge
+        edgeKey1: ${{CDN_EDGE_KEY_1}}
+        edgeKey2: ${{CDN_EDGE_KEY_2}}       # for BYO CDN in front
+    rules:
+      - name: purge-auth-rule
+        when: { reqProperty: tier, equals: "publish" }
+        action: { type: authenticate, authenticator: purge-auth }
+  requestTransformations:
+    removeMarketingParams: true            # better cache hit ratio
+    rules:
+      - name: set-country-header
+        actions:
+          - { type: set, reqHeader: x-country, value: { reqProperty: clientCountry } }
+  responseTransformations:
+    rules:
+      - name: frame-options
+        actions:
+          - { type: set, respHeader: X-Frame-Options, value: SAMEORIGIN }
+```
+
+Purge a URL after an urgent change:
+
+```bash
+curl -X PURGE -H "X-AEM-Purge-Key: $CDN_PURGE_KEY_1" "https://www.mysite.com/en/offers.html"
+# purge everything (use sparingly): add header  X-AEM-Purge: all
+```
+
+**E. Authenticated and personalized content**
+
+- **CUG** pages on publish: Dispatcher can cache them with **permission-sensitive caching** (`/auth_checker` calling a servlet that checks the user's access with a HEAD request); otherwise mark them `Cache-Control: private`.
+- Personalization: prefer client-side (Target/Web SDK, or a JSON endpoint per user that is not cached) and keep the HTML shell fully cacheable. Sling Dynamic Include (SSI) is possible at Dispatcher level but adds complexity; avoid ESI at the Adobe CDN.
+- Never cache responses with `Set-Cookie` for a logged-in user; ensure `Vary` is correct.
+
+**F. Security hardening checklist (publish)**
+
+- [ ] Dispatcher filters: deny by default; allow only needed selectors/extensions; deny `/crx`, `/system`, `/bin` (except needed servlets), `/libs/granite`, `*.infinity.json`, `*.tidy.json`, `*.query.json`, `*.sysview.xml`, `*.docview.xml`.
+- [ ] No anonymous write access; no default credentials (Cloud Service enforces IMS on author).
+- [ ] Traffic filter rules: rate limit per IP, block admin paths, WAF flags (licensed), geo-blocking if required.
+- [ ] CSP header (start with report-only), HSTS, X-Content-Type-Options, Referrer-Policy.
+- [ ] Secrets only in Cloud Manager secret variables.
+- [ ] Regular review of Developer Console access and IMS groups.
+- [ ] Pen test coordinated with Adobe; OWASP Top 10 review of custom servlets (input validation, XSS via HTL context `@ context='...'`).
+
+**Expert-level interview answer: "Cache hit ratio at the CDN is 40%. How do you get to 90%?"** Analyse CDN logs by URL pattern and `cache` field (HIT/MISS/PASS). Common causes: unique query strings (marketing params → `removeMarketingParams`, ignoreUrlParams), `Set-Cookie` or `Cache-Control: private` on public pages, short or missing TTLs, `Vary` on too many headers, personalized HTML. Fix headers in Apache, move personalization client-side, add `Surrogate-Control` with longer edge TTL and purge on publish, and pre-warm key pages after deployments.
+
 ### References
 
 - [Dispatcher in the cloud](https://experienceleague.adobe.com/en/docs/experience-manager-cloud-service/content/implementing/dispatcher/disp-overview)
@@ -908,6 +1834,74 @@ https://delivery-p123-e456.adobeaemcloud.com/adobe/assets/urn:aaid:aem:1a2b.../a
 **Q: "Client has a custom DAM Update Asset step that adds a watermark. How do you migrate it?"** Replace it with a custom Asset Compute worker (App Builder) in a processing profile, or a post-processing workflow if it's metadata-only. Remove the workflow launcher customization.
 
 **Q: "Ingest 5 million assets from an old DAM."** Bulk Import from S3/Azure (or Content Transfer Tool if source is AEM), in batches, with processing profiles tuned, metadata mapped via CSV, and off-peak scheduling. Plan for reprocessing time.
+
+### 9.5 Deep dive (handbook): designing and running AEM Assets
+
+**A. Upload and processing flow (know it step by step)**
+
+1. Client calls `initiateUpload` on the target folder → AEM returns signed upload URIs for blob storage.
+2. Client uploads binary parts **directly to blob storage** (parallel, resumable).
+3. Client calls `completeUpload` → AEM creates the asset node (metadata only).
+4. AEM sends a processing request to **asset microservices** with the folder's **processing profile**.
+5. Microservices generate renditions (standard: thumbnails, web rendition; custom: sizes/formats you define; Asset Compute custom workers), extract metadata and XMP, run Smart Tags.
+6. Renditions are written back to blob storage; AEM is notified → **post-processing workflow** (if configured for the folder) runs, e.g. set approval status, notify, copy metadata.
+7. Asset is searchable; once **Approved**, it's deliverable via Dynamic Media with OpenAPI / Content Hub.
+
+**B. Processing profiles**
+
+| Profile type | Example |
+| --- | --- |
+| Standard | JPEG 1280px web rendition, PNG thumbnails, extract text from PDFs |
+| Custom (Asset Compute) | Watermark, call external AI for tagging, convert PSD to custom format |
+| Video | Dynamic Media video encoding profiles |
+| Image profiles (DM) | Smart crop definitions (e.g. 1:1, 16:9, 4:5) |
+
+Apply profiles to folders; subfolders inherit. Reprocess existing assets after profile changes (folder → Reprocess).
+
+**C. Metadata governance**
+
+- **Metadata schemas** (Tools → Assets → Metadata Schemas) per folder: required fields, cascading fields, dropdowns from tags.
+- **Tag taxonomy** in `/content/cq:tags/mysite` owned by a librarian role; Smart Tags trained/curated.
+- **Approval and rights**: `dam:status` approved/rejected; expiry date (`prism:expirationDate`) blocks use after expiry; licence fields.
+- **Content credentials** (C2PA) for AI-generated assets.
+- Folder structure: by brand/campaign/product, not by year; permissions by folder via IMS groups.
+
+**D. Asset Compute worker development**
+
+```bash
+aio app init my-workers --template @adobe/generator-app-asset-compute
+cd my-workers
+aio app run          # Asset Compute devtool: upload a file, run the worker locally
+aio app test         # unit tests with test files and expected renditions
+aio app deploy       # deploy to I/O Runtime; reference the worker URL in a processing profile
+```
+
+Keep workers stateless and fast (they have time and memory limits); for long tasks, call an external service and let it write back via API.
+
+**E. Delivery options compared**
+
+| Option | When |
+| --- | --- |
+| Web-optimized image delivery (Core Image v3) | Sites pages on the same program; no extra licence |
+| Dynamic Media (classic Scene7-based) | Existing DM customers: image presets, viewers, 360, video |
+| Dynamic Media with OpenAPI | Approved assets delivered to any channel (EDS, headless, Commerce, third parties) with stable URNs, transformations by URL |
+| Content Hub | Marketers/partners self-serve approved, on-brand assets with search and download |
+| Brand Portal | Legacy distribution to agencies; Content Hub is the newer path |
+
+**F. Integrations**
+
+- **Asset Selector**: an embeddable micro-frontend (IMS-authenticated) to pick AEM assets inside other apps (custom React apps, Commerce admin, Workfront).
+- **Adobe Express / Creative Cloud** connectors so designers save straight into AEM Assets.
+- **Workfront**: assets linked to projects, review/approval in Workfront, approved files land in AEM folders with metadata mapped.
+- **Events**: AEM Assets events (asset processed, metadata changed, deleted) via Adobe I/O Events to drive PIM/CDN/search sync.
+
+**G. Performance and scale considerations**
+
+- Millions of assets are fine; avoid >1,000 children per folder for usability, and design search with custom `damAssetLucene` index properties for frequently filtered metadata.
+- Bulk imports should be throttled and scheduled; monitor processing queues in the Assets UI.
+- Storage and downloads affect licence consumption; clean unused renditions and duplicates (duplicate detection can be enabled).
+
+**Expert-level interview answer: "Design a central DAM for 8 brands and 3 agencies."** One AEM Assets program as the system of record; folder per brand with brand-specific metadata schemas and processing profiles; IMS groups per brand and agency (agencies get upload to WIP folders, not approved ones); approval workflow (or Workfront review) setting `Approved`; Content Hub for consumers; Dynamic Media with OpenAPI for delivery to Sites/EDS/Commerce/social tools; Asset Selector embedded in each channel tool; events to sync PIM; governance board for taxonomy; metrics on asset reuse.
 
 ### References
 
@@ -990,6 +1984,81 @@ function calculateAge(dob) {
 
 **Q: "JEE features without equivalent in the cloud?"** Process Management (long-lived processes, Workbench), some Output/Assembler deployments → Communications APIs, AEM Workflows, or external BPM.
 
+### 10.5 Deep dive (handbook): building enterprise forms
+
+**A. Choosing the form technology**
+
+| Requirement | Choose |
+| --- | --- |
+| New form, AEM Sites (HTL) | Adaptive Form with **Core Components** |
+| Max performance, public form on an EDS site | **Forms on EDS** (Universal Editor authoring) |
+| Native mobile app or React SPA owns the UI | **Headless adaptive form** (JSON) + renderer |
+| Existing XDP/PDF-based process, print fidelity | XFA/PDF forms via Forms Service APIs, or convert with Automated Forms Conversion |
+| Simple contact form on EDS with docs authoring | EDS forms block defined in a spreadsheet |
+
+**B. Form Data Model (FDM) step by step**
+
+1. Create a **data source** cloud configuration: RESTful service (upload its OpenAPI/Swagger spec), SOAP (WSDL), OData (e.g. Dynamics), Salesforce, or RDBMS (JDBC datasource OSGi config; database must be reachable via Advanced Networking).
+2. Create the FDM: add data model objects (e.g. `Customer`) and services (`getCustomer`, `updateCustomer`) from the data source.
+3. Configure **read/write services** and bindings (e.g. `getCustomer` with argument bound to the user profile attribute or a request parameter).
+4. Test services inside the FDM editor with sample input.
+5. Build the form based on the FDM: fields bind to model properties (`bindRef`), so prefill and submit map automatically.
+6. Use **Prefill service**: FDM read service, or a custom prefill service (OSGi) for complex logic.
+7. Submit with "Submit using Form Data Model" to write back, or invoke an FDM service from a rule (e.g. look up an address by postcode).
+
+Authentication to backends: OAuth 2.0, API key, basic, mutual TLS (certificates via keystore), with secrets in Cloud Manager variables where supported.
+
+**C. Submit actions overview**
+
+| Submit action | Use case |
+| --- | --- |
+| Submit to REST endpoint | Your API gateway / App Builder action (most common in enterprises) |
+| Submit using Form Data Model | Write to CRM/DB through FDM services |
+| Send email | Low-volume notifications (avoid PII in emails) |
+| Invoke AEM Workflow | Approval routing, Document of Record, Sign steps on author |
+| Microsoft Power Automate / SharePoint / OneDrive / Azure Blob | Microsoft-centric clients |
+| Workfront Fusion | No-code integrations |
+| Adobe Experience Platform / Marketo | Lead capture into marketing |
+| Custom submit action | Your own server-side logic (Java) when none fit |
+
+**D. Rules and logic**
+
+- Visual Rule Editor: When/Then rules (show/hide, set value, validate, invoke service, navigate panels, dispatch events).
+- Custom functions (10.2) for reusable logic; they are client-side JS, so never put secrets in them.
+- Validation: client-side for UX, **server-side revalidation** on submit (Core Components forms support server-side validation of constraints) for security.
+- Large forms: use panels/wizards, lazy loading of fragments, and **form fragments** for reusable sections (address, applicant details).
+
+**E. Document of Record (DoR) and signing**
+
+- DoR: PDF version of the submitted data, auto-generated from the form or from an XDP template; configured in form properties; stored or attached in the workflow.
+- Acrobat Sign: configure the Sign cloud configuration (OAuth), enable signing in the form (signers, order, authentication like SMS/KBA), handle the callback to complete the process.
+
+**F. Communications APIs (document generation) pattern**
+
+1. Design XDP templates (Forms Designer) or use the new Interactive Communication editor with FDM binding.
+2. Store templates in AEM (Forms & Documents) or cloud storage.
+3. Call the API from server-side code with an OAuth Server-to-Server token: synchronous for single documents (e.g. a confirmation letter), batch for volume (input data in cloud storage, output written back).
+4. Post-process: assemble, protect, sign, convert (HTML → PDF, PDF → image), then deliver via email/print/archive.
+
+**G. Forms security and compliance checklist**
+
+- [ ] No PII stored in AEM long-term; drafts only if required, with retention policy.
+- [ ] Captcha (reCAPTCHA Enterprise, hCaptcha or Turnstile) on public forms; traffic filter rate limits on submit URLs.
+- [ ] File attachments: size/type limits, virus scanning before persistence (EA scanner hook in 2026, or scan in your submit endpoint).
+- [ ] Server-side validation; output encoding.
+- [ ] Accessibility WCAG 2.2 AA (labels, error messages, keyboard navigation) — Core Components help.
+- [ ] Analytics without PII (track step completion and abandonment only).
+
+**H. Migrating Forms from 6.5 to Cloud Service**
+
+- Run BPA, check Forms-specific findings (e.g. JEE dependencies, custom submit actions, workflows).
+- Move forms, themes, fragments, FDMs and data source configs via packages/CTT; recreate cloud configurations (credentials) per environment.
+- Re-test every FDM integration with new egress IPs.
+- Convert Foundation forms to Core Components progressively (conversion utility + manual fix of scripts).
+- Replace JEE-only features: Process Management → AEM Workflow/App Builder/BPM; Output/Assembler → Communications APIs.
+
+**Expert-level interview answer: "Design a loan application journey for 1 million applications a year."** EDS-hosted or Core Components adaptive form with panels and save/resume; prefill from CRM via FDM after customer login (OIDC); address/credit lookups via FDM services from rules; attachments scanned; submit to the bank's API gateway (async processing via queue), Document of Record generated and archived in ECM; Acrobat Sign for consent; Communications API generates offer letters in batch; analytics on step drop-off; traffic filters + captcha; load test the submit API, not just AEM; no PII retained in AEM.
+
 ### References
 
 - [AEM Forms as a Cloud Service introduction](https://experienceleague.adobe.com/en/docs/experience-manager-cloud-service/content/forms/forms-overview/home)
@@ -1067,6 +2136,134 @@ exports.main = main;
 **Q: "How do you add a 'Generate SEO description with AI' button for authors?"** A UI Extensibility extension (App Builder) in the CF editor or Universal Editor that calls an LLM through an App Builder action and writes the field back. No `/libs` overlay.
 
 **Q: "40 markets, 12 languages, global brand. Content model?"** Blueprint per language master, live copies per market, translation via TIF connector with MT for low-priority content, XFs for shared header/footer, CAC for market settings, and a governance model for which components a market may override.
+
+### 11.7 Deep dive (handbook): integration recipes
+
+**A. App Builder project anatomy**
+
+```text
+my-app/
+  app.config.yaml          # runtime manifest: packages, actions, web assets
+  ext.config.yaml          # for extensions (e.g. aem/cf-console-admin/1)
+  actions/
+    cf-published/index.js  # serverless action (Node.js)
+  web-src/                 # React SPA (Spectrum) for UI or extension
+  .env                     # local only, never committed
+```
+
+```yaml
+# app.config.yaml (part)
+application:
+  runtimeManifest:
+    packages:
+      mysite:
+        license: Apache-2.0
+        actions:
+          cf-published:
+            function: actions/cf-published/index.js
+            runtime: nodejs:20
+            web: 'no'
+            inputs:
+              LOG_LEVEL: info
+              SEARCH_API_KEY: $SEARCH_API_KEY
+            annotations:
+              require-adobe-auth: false
+```
+
+Commands: `aio app init`, `aio app run` (local), `aio app deploy` (to Workspace: Stage/Production), `aio app logs`.
+
+**B. Subscribing to AEM events (step by step)**
+
+1. In Adobe Developer Console, open the App Builder project → Workspace → Add Event → choose the AEM event provider for your environment (Sites/Assets events).
+2. Select event types (e.g. content fragment published, page published, asset processing completed).
+3. Choose delivery: **Runtime action** (your `cf-published` action) or **webhook URL**, or **journaling** (pull API, good for reliable batch consumers).
+4. Handle retries and idempotency: events can be delivered more than once; store the event ID.
+5. Monitor in the Developer Console (debug tracing shows payloads).
+
+**C. UI Extensibility: a button in the Content Fragment console**
+
+```js
+// web-src/src/components/ExtensionRegistration.js
+import { register } from '@adobe/uix-guest';
+
+export default async function init() {
+  const guestConnection = await register({
+    id: 'mysite-seo-ext',
+    methods: {
+      headerMenu: {
+        getButtons() {
+          return [{
+            id: 'generate-seo',
+            label: 'Generate SEO',
+            icon: 'MagicWand',
+            onClick() {
+              guestConnection.host.modal.showUrl({ title: 'Generate SEO', url: '/index.html#/seo-modal' });
+            },
+          }];
+        },
+      },
+    },
+  });
+}
+```
+
+The modal (React) gets the selected fragments from the host, calls an App Builder action (which calls the LLM and the Sites API with a server-to-server token), and writes the field back. Deployed per environment; enabled for authors in Extension Manager.
+
+**D. API Mesh: one GraphQL API for AEM + Commerce**
+
+```json
+{
+  "meshConfig": {
+    "sources": [
+      { "name": "AEM", "handler": { "graphql": {
+          "endpoint": "https://publish-p123-e456.adobeaemcloud.com/content/_cq_graphql/mysite/endpoint.json" } } },
+      { "name": "Commerce", "handler": { "graphql": {
+          "endpoint": "https://commerce.example.com/graphql" } } }
+    ]
+  }
+}
+```
+
+```bash
+aio api-mesh:create mesh.json
+aio api-mesh:status
+```
+
+Add `additionalResolvers` to join e.g. a product SKU in a CF with live price/stock from Commerce.
+
+**E. MSM in depth**
+
+| Concept | Detail |
+| --- | --- |
+| Blueprint | Source tree, e.g. `/content/mysite/language-masters/en` |
+| Live Copy | Target tree, e.g. `/content/mysite/uk/en` with a live relationship |
+| Rollout config | What happens on rollout: Standard (`/libs/msm/wcm/rolloutconfigs/default`), Activate on Blueprint activation, Push on modify, custom configs combining synchronizers |
+| Inheritance | Per component; authors can cancel/re-enable inheritance; cancelled = local override kept |
+| Rollout scale | On Cloud Service rollouts of large trees run as background jobs; schedule large rollouts |
+
+Good practice: limit live copy depth (language master → market), avoid live copies of live copies unless needed, define which components markets may change (policies/locks), audit overridden content periodically.
+
+**F. Translation in depth**
+
+1. Configure the translation provider (TIF connector cloud config: Smartling, RWS, Lionbridge, XTM, or Microsoft Translator machine translation).
+2. Translation rules (`/conf/global/settings/translation/rules/translation_rules.xml`) decide which properties are translated (e.g. `jcr:title`, `text`, but not `fileReference`) and which referenced assets/CFs are included.
+3. Create a language copy / translation project; choose "human" or "machine"; send; review returned content in the translation job; approve → content lands in the language copy.
+4. Updates: "Update language copies" creates a launch with only changed content to review before promoting.
+5. For EDS document authoring, translation is file-based (connectors for SharePoint/Google or a localization service).
+
+**G. Commerce integration settings (CIF)**
+
+- Commerce GraphQL endpoint set per environment via the Cloud Manager variable `COMMERCE_ENDPOINT`, with CIF configuration in `/conf/mysite` (store view, catalog root).
+- Product/category pages are templates rendering CIF Core Components with SEO URLs; caching per product page with purge on catalog updates.
+- For new builds, evaluate the EDS Commerce storefront with drop-ins first.
+
+**H. Adobe Web SDK on AEM**
+
+- Adobe Tags property with the Web SDK extension; datastream in Data Collection points to Analytics, Target, AEP.
+- Map ACDL events to XDM (`web.webPageDetails`, `commerce`, custom field groups) in Tags rules.
+- Consent: integrate the client's CMP (OneTrust etc.) with Web SDK consent commands before sending events.
+
+**Expert-level interview answer: "Search across pages, PDFs and products with typo tolerance and facets."** Don't build it on Oak queries. Index content into a search service (Algolia, Coveo, Elastic, or Adobe's own options) using I/O events (publish/unpublish) and a nightly full reindex job in App Builder; index assets' extracted text from microservices; products from Commerce. Front end calls the search service directly from the browser with a search-only key; AEM only renders the search page component.
 
 ### References
 
@@ -1150,6 +2347,88 @@ aio aem-migration:all
 
 **Q: "Biggest lessons learned from migrations?"** Start IMS and networking early (they block testing); clean content before CTT; don't lift-and-shift every customization (many are obsolete); budget performance testing for the CDN layer; and run top-ups frequently to keep the final freeze short.
 
+### 12.7 Deep dive (handbook): migration runbook
+
+**A. Content Transfer Tool step by step**
+
+1. In CAM, create a **migration set** (it generates an extraction key and a cloud staging container).
+2. Install the CTT package on the source author (and publish if migrating publish separately) via Package Manager.
+3. In the source AEM: Operations → Content Migration → Content Transfer → *Create migration set* using the extraction key; select paths (`/content/mysite`, `/content/dam/mysite`, `/conf/mysite`, `/content/cq:tags/mysite`, etc.); choose whether to include versions; groups/users with ACLs are included automatically.
+4. Run **Check size** (estimates repository and data store size; ensure disk space on source for extraction).
+5. **Extraction**: content goes to the cloud staging container. For very large data stores, enable **pre-copy** (AzCopy from S3/Azure source blob store) to cut hours/days.
+6. In CAM: **Ingestion** into target author (and publish) with "wipe" for the first load. Allow the target IP allowlist rule for ingestion where needed.
+7. Validate: page counts, asset counts, references, ACLs, CUGs; run the **migration validation** report; reindexing completes in background.
+8. **Top-up**: re-run extraction with *overwrite staging container* off and ingest with wipe off — only changed content since last extraction is moved. Repeat weekly, then daily before go-live.
+9. Final top-up during content freeze, then go-live.
+
+During ingestion, the target environment is unavailable for authoring; plan ingestion windows with the client. Asset renditions are regenerated on the target (microservices), which takes time proportional to asset volume; you can choose to reprocess later.
+
+**B. Before/after code examples**
+
+OSGi config:
+
+```xml
+<!-- BEFORE: /apps/mysite/config.publish.uk/com.mysite.Service.xml -->
+<jcr:root jcr:primaryType="sling:OsgiConfig" apiUrl="https://uk.api.com" apiKey="hardcoded"/>
+```
+
+```json
+// AFTER: /apps/mysite/osgiconfig/config.publish/com.mysite.Service.cfg.json
+{ "apiUrl": "$[env:API_URL]", "apiKey": "$[secret:API_KEY]" }
+```
+
+Index:
+
+```text
+BEFORE: /oak:index/productIndex (type=property, propertyNames=[productId])
+AFTER : /oak:index/mysite.productIndex-1-custom-1 (type=lucene, compatVersion=2,
+        async=[async,nrt], indexRules/nt:unstructured/properties/productId propertyIndex=true)
+```
+
+Replication agent used for a custom "push to external system":
+
+```text
+BEFORE: custom transport replication agent posting to https://search.myco.com
+AFTER : AEM publish event → Adobe I/O Events → App Builder action → search API
+```
+
+DAM workflow:
+
+```text
+BEFORE: DAM Update Asset model + custom step "Add watermark" (ImageMagick)
+AFTER : Processing profile with a custom Asset Compute worker "watermark" on /content/dam/mysite/public
+```
+
+**C. Cutover runbook (T = go-live)**
+
+| When | Activity | Owner |
+| --- | --- | --- |
+| T-30 days | Prod environment complete; full content load; performance test passed; DNS TTLs lowered to 300 s | Platform lead |
+| T-14 days | Authors trained; UAT sign-off; SEO redirect map validated; monitoring dashboards live | Delivery lead |
+| T-7 days | Daily top-ups; go/no-go criteria agreed; rollback plan (keep old prod running) | Architect |
+| T-2 days | Content freeze starts (emergency changes logged for re-entry) | Business |
+| T-1 day | Final top-up; content validation; smoke tests on prod via hosts-file/preview domain | QA |
+| T | Switch DNS/CDN origin; purge caches; smoke tests; monitor errors and 404s | Platform lead |
+| T+1..14 days | Hypercare; fix 404s via redirects; tune caching; decommission plan for old infra | Whole team |
+
+**D. Risk register (typical)**
+
+| Risk | Mitigation |
+| --- | --- |
+| IMS/SSO setup delays block testing | Start Admin Console + IdP federation in week 1 |
+| Integrations blocked by IP allowlists | Request dedicated egress IP early; share IPs with backend teams |
+| Long asset reprocessing | Pre-copy, phased ingestion, reprocess off-peak |
+| Custom code incompatible with cloud | BPA early, spike the hardest items first |
+| Performance regressions | Load test stage with production-like CDN config |
+| Authors resist new UI | Training, quick-reference guides, super-users per market |
+| SEO traffic drop after cutover | Redirect map, canonical checks, sitemap, Search Console monitoring |
+
+**E. Estimation approach**
+
+Effort ≈ (BPA findings by category × effort per finding type) + components to refactor + integrations × complexity + content migration iterations + testing (30-40% of build) + contingency 15-20%. Present it as a range with assumptions, and validate with a 2-4 week **pilot** migrating one site end to end.
+
+**Expert-level interview answer: "After go-live, authors see missing assets on some pages. What happened and how do you fix it?"** Likely causes: assets outside the migrated paths (references to `/content/dam/shared`), top-up ran before late uploads, or renditions not yet regenerated. Check reference reports for broken links, run a targeted top-up for missing paths (non-wipe), reprocess assets with failed processing, and add a reference-check step to the cutover checklist.
+
 ### References
 
 - [Migration journey: getting started](https://experienceleague.adobe.com/en/docs/experience-manager-cloud-service/content/migration-journey/getting-started)
@@ -1225,6 +2504,67 @@ Architect stance for interviews: AI features are accelerators, not architecture.
 **Q: "Production is slow at 9 am every day. How do you investigate on Cloud Service?"** Check CDN cache hit ratio and traffic spikes in CDN logs (bots?), request.log for slow URLs, error.log for query traversal warnings (missing index), APM transaction traces, recent deployments. Fixes: cache headers, traffic filter rules, indexes, query rewrites, and moving heavy work off publish.
 
 **Q: "How do you make the client's content 'AI-ready'?"** Structured content (Content Fragments with clear models), semantic accessible HTML, good metadata and schema.org, fast pages (EDS), an LLM Optimizer / GEO practice, and permissions on what AI crawlers may access (robots, edge rules).
+
+### 13.6 Deep dive (handbook): running AEM in production
+
+**A. Log types and what to look for**
+
+| Log | Where | Look for |
+| --- | --- | --- |
+| `aemerror` | Author/publish | Exceptions, query traversal warnings, OSGi bundle failures, slow job warnings |
+| `aemrequest` / `aemaccess` | Author/publish | Slow requests (duration), 4xx/5xx by URL, request rate |
+| `httpderror` / `httpdaccess` | Dispatcher (Apache) | Filter denials, cache misses, upstream errors |
+| `aemdispatcher` | Dispatcher | Cache decisions, invalidations, filter rule matches |
+| CDN log | Adobe CDN | Per-request JSON: `cache` (HIT/MISS/PASS), `status`, `ttfb`, `url`, `host`, `cli_ip`, `cli_country`, `pop`, `rules` (traffic filter matches) |
+
+Example Splunk searches over forwarded CDN logs:
+
+```text
+index=aem_prod sourcetype=cdn | stats count by cache            # cache hit ratio
+index=aem_prod sourcetype=cdn status>=500 | top url               # failing URLs
+index=aem_prod sourcetype=cdn rules=* | stats count by rules, cli_ip   # traffic filter matches
+index=aem_prod sourcetype=cdn | timechart span=1m avg(ttfb)       # latency trend
+```
+
+**B. Incident runbook (P1: site down or 5xx spike)**
+
+1. Confirm scope: CDN logs (all URLs or some? all regions?), Cloud Manager environment status, Adobe status page.
+2. Recent changes? Last pipeline run, config pipeline (CDN rules!), environment variable changes, content publishes (huge tree?).
+3. If caused by your release: re-run the pipeline with the previous Git tag (there is no "rollback button" for code; redeploy the last good commit). If caused by CDN config: redeploy previous `cdn.yaml`.
+4. If platform-side: open a P1 with Adobe Support (Admin Console → Support) with program/env IDs, timestamps, sample request IDs (`x-request-id` / CDN request ID).
+5. Mitigate: serve stale (stale-if-error headers help), block abusive traffic with a traffic filter rule, maintenance page via CDN error pages.
+6. Post-incident review: root cause, monitoring gap, test gap.
+
+**C. Performance test plan for stage**
+
+- Stage is sized like production, so test there, scheduled with Adobe notice for big tests.
+- Test through the CDN (real hostnames) and also cache-busting scenarios (cold cache after deploy).
+- Model: 80% cached anonymous pages, 15% search/API, 5% form submits; ramp to 2× expected peak.
+- Pass criteria: TTFB p95 at origin, error rate < 0.1%, CDN hit ratio > 90%, author responsiveness during publish storms.
+- Include author tests (bulk publish, MSM rollout, asset upload) — author slowness is a common go-live complaint.
+
+**D. SLOs you should propose to a client**
+
+| SLO | Example target |
+| --- | --- |
+| Availability (publish, measured at CDN) | 99.9% monthly (contractual SLA from Adobe depends on licence) |
+| LCP p75 (mobile, RUM) | < 2.5 s |
+| INP p75 | < 200 ms |
+| Publish-to-live latency | < 5 min including CDN TTL |
+| Prod deployment frequency | Weekly, zero-downtime |
+| Mean time to recover (code issue) | < 1 h via redeploy of last good tag |
+
+**E. AI governance checklist (for GenAI features in AEM)**
+
+- [ ] Define which AI features are enabled per role (Admin Console / product profiles).
+- [ ] Human review before publish for generated copy and images.
+- [ ] Brand voice and terminology rules supplied to generation features.
+- [ ] Legal review of image generation usage (Firefly is trained for commercial safety; still check client policy).
+- [ ] Content credentials retained on generated assets.
+- [ ] No confidential/PII content pasted into prompts unless approved.
+- [ ] Measure outcomes: experiments for generated variations, Sites Optimizer fixes tracked.
+
+**Expert-level interview answer: "How do you know your AEM platform is healthy without logging into it?"** Dashboards over forwarded logs (CDN hit ratio, 5xx rate, TTFB p95, traffic filter hits), RUM Core Web Vitals, synthetic checks on key journeys every few minutes, pipeline success rate, Adobe incident notifications routed to the team's on-call tool, and weekly review of Sites Optimizer findings and Cloud Manager recommendations.
 
 ### References
 
@@ -1341,6 +2681,67 @@ Answer every design question in the same order: **clarify requirements → choos
 - [ ] I can walk through a migration with the tool names.
 - [ ] I can talk about Forms Core Components, headless forms, EDS forms and Communications APIs.
 - [ ] I have one or two stories from my own migration work (problem, decision, outcome).
+
+### 14.8 Deep technical questions (with model answers)
+
+**Q: How is `/apps` immutability enforced technically?** A composite node store mounts `/apps` and `/libs` from a read-only segment store baked into the image; writes fail at the repository level (2.6).
+
+**Q: What runs when a publish pod starts?** Created from the golden master, starts AEM with the current image, repoinit runs, it subscribes to the distribution queue and replays pending items, passes health checks, then receives traffic.
+
+**Q: Why must content changes be backward compatible during deployments?** Old and new code run side by side against the same author repository during a rolling deployment.
+
+**Q: Difference between `Cache-Control` and `Surrogate-Control`?** Surrogate applies only to the CDN and is stripped; Cache-Control applies to browsers (and CDN if no surrogate).
+
+**Q: What does `statfileslevel` do and how would you set it for 20 language sites?** It sets the depth of `.stat` files so invalidation only affects that subtree; set it to the language level (e.g. 3 for `/content/brand/country/lang`) so publishing in one site doesn't flush the others.
+
+**Q: Sling Model injection: `@ValueMapValue` vs `@Inject`?** Use specific injectors (`@ValueMapValue`, `@OSGiService`, `@ScriptVariable`, `@Self`) for clarity and performance; generic `@Inject` tries all injectors.
+
+**Q: How do you make a Sling Model cacheable per request?** `@Model(cache = true)` caches the adaptation result for the same adaptable within a request.
+
+**Q: Explain `ResourceSuperType` delegation.** `@Self @Via(type = ResourceSuperType.class)` adapts the request as if it were the super type, giving you the Core Component's model to wrap.
+
+**Q: When does Oak traverse, and how do you detect it?** When no index matches the query constraints; logs a traversal warning, and the Developer Console's query explain shows `traverse`. Fix with a Lucene index rule including the property and node type.
+
+**Q: How do you handle 10,000 vanity redirects?** Not with `sling:vanityPath` on pages; use `cdn.yaml` redirects or an Apache `RewriteMap` (or EDS redirects sheet), managed by a business-friendly source.
+
+**Q: How do GraphQL persisted queries get cached?** They are GET requests with a stable URL; Dispatcher and CDN cache them using the cache headers stored with the persisted query; publishing content invalidates Dispatcher, CDN TTLs bound staleness.
+
+**Q: What's the difference between the Preview tier and author preview mode?** Preview tier is a separate publish-like service with its own URL and Dispatcher/CDN; author preview mode only renders in the editor for the logged-in author.
+
+**Q: EDS: what are the code bus, content bus and media bus?** Code from GitHub, converted content, and content-addressed media, each cached at the edge (6.8).
+
+**Q: How do you secure a preview site on EDS?** Site authentication with tokens for preview and/or live; or restrict at your CDN.
+
+**Q: What would you never do on AEMaaCS?** Write to `/apps` at runtime, overlay `/libs`, keep state on local disk, run long synchronous requests, hard-code secrets, rely on a specific publish instance, or process binaries in the JVM.
+
+### 14.9 Whiteboard exercise: draw this in 5 minutes
+
+"Draw the architecture for a global site on AEMaaCS with EDS front end, AEM authoring, Commerce, search and analytics."
+
+What to draw (top to bottom):
+
+1. **Users** → **DNS** → **Adobe CDN (Fastly)** with traffic filters/WAF, origin selectors.
+2. CDN origins: **EDS** (pages), **AEM publish/Dispatcher** (APIs, legacy paths, forms submit), **Commerce** (GraphQL via API Mesh), **Dynamic Media with OpenAPI** (images).
+3. **AEM author** (Universal Editor, MSM, translation, workflows) → publishes to EDS (content bus) and to publish (SCD).
+4. **AEM Assets** program shared, Content Hub for marketers.
+5. **App Builder**: I/O events → search indexer (Algolia/Elastic), PIM sync, UI extensions.
+6. **Adobe Tags/Web SDK** → Analytics/Target/AEP; RUM for CWV.
+7. **DevOps**: GitHub (EDS code, AEM code) → Code Sync / Cloud Manager pipelines; config pipeline for CDN; logs forwarded to Splunk.
+8. **Identity**: IMS (authors) with client IdP federation; OIDC for customers.
+
+Narrate the request flow for one anonymous page view and one author publish; then name 3 risks (cache invalidation across EDS and AEM, authoring complexity, third-party script impact on LCP).
+
+### 14.10 Behavioural questions (prepare STAR stories)
+
+| Question | What they look for |
+| --- | --- |
+| Tell me about a migration you led and what went wrong | Honesty, lessons, risk management |
+| A client insists on a design you think is wrong | Influence with data, trade-off documents, escalation path |
+| You inherited a slow, unstable AEM platform | Diagnosis method, prioritization, measurable outcome |
+| How do you keep your AEM knowledge current? | Release notes, Adobe community, hands-on sandbox/RDE, certifications (AEM Sites Architect / Developer Expert) |
+| How do you guide junior developers? | Code reviews, standards, pairing, reusable patterns |
+
+For your gap since 2020, say it confidently: you led/participated in a migration, you have refreshed hands-on on the current stack (EDS, Universal Editor, Cloud Manager pipelines, cdn.yaml), and you bring architecture judgment that tools don't replace.
 
 ### Note on sources
 
