@@ -255,6 +255,309 @@ This catalogue lists **143 changes** in 12 areas, one line each, with the deploy
 | 142 | Generate Variations (copy and image variants) | Cloud, EDS | Faster experimentation content | M13.4 |
 | 143 | AI Assistant and agents across AEM | Cloud | Natural-language help and actions for users | M13.4 |
 
+## Changes by topic: development, Sites, components, UI, authoring, Assets, authentication, coding
+
+The same changes regrouped by the topic you are asked about, with extra detail per topic. A change can appear under more than one topic. **Cat #** points to the row in the Change Catalogue above; **New** marks points added here that the catalogue doesn't list. Each topic ends with a one-line "what to say" summary.
+
+### T1. Development-related (34 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Deploy only through Cloud Manager pipelines (full-stack, front-end, web-tier, config) | Cloud | 19-23 |
+| 2 | Code quality gates (Sonar + Adobe rules + OakPAL), coverage threshold | Cloud | 24, 53 |
+| 3 | Custom functional and UI tests gate production | Cloud | 26 |
+| 4 | Bring-your-own Git; PR-based checks | Cloud | 27 |
+| 5 | Local AEM SDK + `aem-sdk-api` instead of the uber-jar | Cloud | 31 |
+| 6 | Rapid Development Environments for second-level deploys | Cloud | 30 |
+| 7 | Dispatcher SDK for local validation | Cloud | 32 |
+| 8 | AEM Analyser Maven plugin in the local build | Cloud | 33 |
+| 9 | Developer Console replaces CRXDE/Felix console on cloud | Cloud | 34 |
+| 10 | Adobe I/O CLI plugins for Cloud Manager, RDE, migration | Cloud | 35 |
+| 11 | New Maven archetype module layout | All | 36 |
+| 12 | Strict package types (application/content/container) | Cloud | 37 |
+| 13 | OSGi config as `.cfg.json` with env vars and secrets | Cloud | 28, 38 |
+| 14 | Run modes limited to author/publish + dev/stage/prod | Cloud | 39 |
+| 15 | Repoinit for users, groups, ACLs, folders | Cloud, LTS | 40 |
+| 16 | Oak indexes as code with `-custom-n` naming | Cloud | 41 |
+| 17 | Sling Jobs instead of per-pod schedulers | Cloud | 42 |
+| 18 | Stateless code: no local disk persistence, disposable pods | Cloud | 43 |
+| 19 | Request and query limits; no traversal | Cloud | 44 |
+| 20 | Java 11 → 17 → 21 (Java 25 runtime announced) | Cloud, LTS | 18, 46 |
+| 21 | Removed libraries (Guava, Commons Collections 3) | Cloud, LTS | 45 |
+| 22 | Outbound calls via Advanced Networking proxy | Cloud | 13, 49 |
+| 23 | `ui.frontend` webpack/TypeScript build | All | 58 |
+| 24 | Front-end theme projects with live proxy (`npm run live`) | Cloud | 59 |
+| 25 | EDS development: vanilla JS blocks, no build, `aem up` local server | EDS | 73 |
+| 26 | Universal Editor instrumentation (`data-aue-*`, component JSON models) | Cloud, EDS | 61, 72 |
+| 27 | GraphQL persisted queries and OpenAPI delivery APIs | Cloud | 82, 84 |
+| 28 | App Builder for integrations, Asset Compute workers, UI extensions | Cloud | 100, 122, 124 |
+| 29 | Adobe I/O Events for event-driven code | Cloud | 123 |
+| 30 | OAuth Server-to-Server credentials for API calls | All | 50 |
+| 31 | Unit tests with AEM Mocks (JUnit 5) as standard | All | 53 |
+| 32 | Built-in SEO sitemap generation via Apache Sling Sitemap (`SitemapGenerator` API) | Cloud | New, see T2 |
+| 33 | Logging via OSGi config + log forwarding; no direct log file access | Cloud | 136 |
+| 34 | Environment variable feature toggles (deploy separate from release) | Cloud | New, M3.8 |
+
+**What to say:** development moved from "server + packages" to "Git + pipeline + immutable images", with stricter structure (archetype, repoinit, cfg.json, indexes as code) and a much faster loop (RDE, SDK, EDS no-build).
+
+### T2. Sites-related (24 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Three ways to deliver a site: classic (HTL + Dispatcher), EDS, headless | Cloud | 1, 69, 82 |
+| 2 | Edge Delivery Services with Lighthouse-100 target | EDS | 69, 73 |
+| 3 | Site Templates and Themes for quick site creation | Cloud | 59 |
+| 4 | Preview tier and "Publish to Preview" in Manage Publication | Cloud | 6 |
+| 5 | Publishing via Content Distribution (no agents); faster global publish | Cloud | 7 |
+| 6 | Built-in sitemap generation (Sling Sitemap), scheduled on publish | Cloud | New |
+| 7 | Core Page component SEO features: canonical URL, hreflang alternates, robots tags | All | New |
+| 8 | Redirects at the CDN (`cdn.yaml`) or EDS redirects sheet instead of only Apache/vanity | Cloud, EDS | 76, 92 |
+| 9 | Multi-site: MSM rollouts as background jobs | Cloud | 68 |
+| 10 | Translation: built-in machine translation, CF translation with references | Cloud | 67 |
+| 11 | Launches still used, combined with Preview tier | Cloud | M11.4 |
+| 12 | Experience Fragments for headers/footers and Target offers (unchanged concept, still core) | All | M11.4 |
+| 13 | Context-Aware Configuration for per-site settings | All | 51 |
+| 14 | Web-optimized image delivery for all Sites pages | Cloud | 55 |
+| 15 | Core Web Vitals (LCP, CLS, INP) as quality targets; experience audit in pipeline | All | 25, 66 |
+| 16 | Accessibility (WCAG 2.2, EU EAA 2025) as a legal requirement | All | 65 |
+| 17 | Sites Optimizer: automatic detection and fixing of SEO, CWV, accessibility, broken links | Cloud, EDS | 140 |
+| 18 | LLM Optimizer for visibility in AI answers (GEO) | Cloud, EDS | 141 |
+| 19 | Generate Variations for copy and images | Cloud, EDS | 142 |
+| 20 | Built-in experimentation on EDS | EDS | 78 |
+| 21 | Commerce sites: CIF or EDS storefront with drop-ins | Cloud, EDS | 128 |
+| 22 | Forms embedded in sites: Core Components forms or EDS forms | Cloud, EDS | 111, 113 |
+| 23 | Multi-region publish for global sites | Cloud | 12 |
+| 24 | Custom domains and SSL self-managed in Cloud Manager | Cloud | 97 |
+
+**What to say:** a site in 2026 is a choice of delivery model (classic, EDS, headless), with SEO, accessibility and Core Web Vitals built into the platform and AI tools continuously optimizing it.
+
+### T3. Component-related (20 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Core Components are the default base for every page component (foundation components legacy) | All | 54 |
+| 2 | Proxy components in `/apps` with `sling:resourceSuperType` to a Core version | All | M5.2 |
+| 3 | Extend logic by Sling Model delegation, never copy Core code | All | 52 |
+| 4 | Style System variants instead of component copies | All | 56 |
+| 5 | Core Image v3 with web-optimized delivery (WebP/AVIF, `srcset`, lazy loading) | Cloud | 55 |
+| 6 | Container components (Container, Tabs, Accordion, Carousel) replace parsys patterns | All | 54 |
+| 7 | Content components added/matured: Teaser, Embed, Download, PDF Viewer, Table of Contents, Progress Bar | All | 54 |
+| 8 | Content Fragment and Content Fragment List components (hybrid pages) | All | M7.1 |
+| 9 | Experience Fragment component for shared header/footer | All | M11.4 |
+| 10 | Adobe Client Data Layer built into components (`data-cmp-data-layer`) | All | 60 |
+| 11 | Component JSON export (`.model.json`) used by headless and Universal Editor | All | M4.4 |
+| 12 | Accessibility built into Core (ARIA, keyboard support) | All | 65 |
+| 13 | AEM Modernize Tools convert foundation → Core and static → editable | All | 135 |
+| 14 | EDS blocks: a component = a folder with `block.js` + `block.css` | EDS | 73 |
+| 15 | Universal Editor component definitions, models and filters (JSON) | Cloud, EDS | 61, 72 |
+| 16 | SPA Editor React/Angular components deprecated for new work | Cloud | 62 |
+| 17 | Adaptive Forms Core Components (text input, panel, wizard, table, etc.) | Cloud, 6.5 | 111 |
+| 18 | CIF Core Components for commerce; EDS Commerce drop-ins | Cloud | 128 |
+| 19 | Component policies define allowed components, styles, image widths | All | M5.7 |
+| 20 | Component quality in pipeline: Lighthouse audit and accessibility tests | Cloud | 25 |
+
+**What to say:** one Core Component library extended by proxies, Style System and delegation for classic sites; blocks for EDS; JSON models for Universal Editor; never fork Core code.
+
+### T4. UI-related (admin and product UI) (14 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Classic UI removed; Touch UI (Coral) for classic consoles | Cloud | M2.3 |
+| 2 | Experience Cloud Unified Shell around AEM (single header, org switch, product navigation) | Cloud | 64 |
+| 3 | AEM "Experience Hub" landing page with links, notifications and recommendations | Cloud | New |
+| 4 | Assets view (simplified UI) alongside the Admin view | Cloud | 103 |
+| 5 | Content Fragments console separate from the Assets console | Cloud | 63 |
+| 6 | New Content Fragment Editor (React Spectrum UI) | Cloud | 63 |
+| 7 | Universal Editor UI for visual editing of any front end | Cloud | 61 |
+| 8 | Content Hub portal for asset consumers | Cloud | 104 |
+| 9 | Extension Manager to enable UI extensions per environment | Cloud | 124 |
+| 10 | New UIs built with React Spectrum; extensible via UI Extensibility points | Cloud | 124 |
+| 11 | Cloud Manager UI for pipelines, environments, logs, domains, networking | Cloud | 19 |
+| 12 | Developer Console UI per environment | Cloud | 34 |
+| 13 | Sidekick extension as the EDS author toolbar | EDS | 75 |
+| 14 | AI Assistant panel inside AEM and Experience Cloud apps | Cloud | 143 |
+
+**What to say:** AEM's UI moved into the Experience Cloud shell, with new React Spectrum UIs (Assets view, CF editor, Universal Editor) that you extend through UI Extensibility instead of overlays.
+
+### T5. Author-related (22 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Authors log in with Adobe IMS (company SSO) | Cloud | 95 |
+| 2 | Page Editor still used for classic sites (Template Editor, layout mode, Style System) | All | M5.5 |
+| 3 | Universal Editor for visual editing of EDS, headless and new sites | Cloud | 61 |
+| 4 | Document-based authoring in Word/Google Docs for EDS | EDS | 70 |
+| 5 | Document Authoring (da.live) browser editor | EDS | 71 |
+| 6 | Sidekick: preview and publish from the document | EDS | 75 |
+| 7 | New Content Fragment Editor for structured content | Cloud | 63 |
+| 8 | Create sites from Site Templates | Cloud | 59 |
+| 9 | Publish to Preview tier before going live | Cloud | 6 |
+| 10 | Manage Publication / scheduled publish via Content Distribution | Cloud | 7 |
+| 11 | Built-in machine translation; translation projects for CFs | Cloud | 67 |
+| 12 | MSM rollouts run in background | Cloud | 68 |
+| 13 | Assets view for simpler asset work | Cloud | 103 |
+| 14 | Asset Selector inside editors and other apps | Cloud | 106 |
+| 15 | Generate Variations for copy and images | Cloud, EDS | 142 |
+| 16 | AI Assistant for how-to help and actions | Cloud | 143 |
+| 17 | Sites Optimizer suggestions for authors (alt text, metadata, broken links) | Cloud, EDS | 140 |
+| 18 | Forms authoring with Core Components, Universal Editor and AI chat | Cloud | 111, 113, 120 |
+| 19 | Launches and workflows (inbox, approvals) continue | All | M11.4 |
+| 20 | Experimentation by authors on EDS (metadata-driven) | EDS | 78 |
+| 21 | Accessibility responsibilities for authors (alt text, headings) | All | 65 |
+| 22 | UI extensions add custom author buttons/panels (e.g. AI SEO text) | Cloud | 124 |
+
+**What to say:** authors now choose between Page Editor, Universal Editor and document authoring, preview on a real Preview tier, and get AI help for variations, translation and fixes.
+
+### T6. Assets-related (16 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Asset microservices replace DAM Update Asset workflow processing | Cloud | 99 |
+| 2 | Processing profiles per folder (standard, custom, video, smart crop) | Cloud | M9.5 |
+| 3 | Asset Compute custom workers in App Builder | Cloud | 100 |
+| 4 | Post-processing workflows after microservices | Cloud | 101 |
+| 5 | Direct binary upload/download via cloud blob storage | Cloud | 9, 102 |
+| 6 | Bulk Import from S3/Azure | Cloud | 107 |
+| 7 | Assets view (ex Assets Essentials) + Admin view | Cloud | 103 |
+| 8 | Content Hub for approved, brand-safe distribution | Cloud | 104 |
+| 9 | Dynamic Media with OpenAPI (approved assets via URNs, URL transforms) | Cloud | 105 |
+| 10 | Dynamic Media Prime / Ultimate packaging | Cloud | 105 |
+| 11 | Asset Selector micro-frontend for any app | Cloud | 106 |
+| 12 | Assets Author API (OpenAPI) and Assets events via I/O Events | Cloud | 84, 123 |
+| 13 | AI: Smart Tags, AI-generated metadata, Firefly generative edits | Cloud | 108 |
+| 14 | Content credentials (C2PA) on generated assets | Cloud | 108 |
+| 15 | Workfront, Creative Cloud and Adobe Express integration | Cloud | 109 |
+| 16 | GenStudio for Performance Marketing built on AEM Assets | Cloud | 129 |
+
+**What to say:** Assets became a cloud content supply chain: binaries in blob storage, processing in microservices, approval-driven delivery through Dynamic Media with OpenAPI and Content Hub, and AI for metadata and variants.
+
+### T7. Authentication and security-related (18 points)
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | Author login via Adobe IMS with federated SSO to the client's IdP (Azure AD/Okta) | Cloud | 95 |
+| 2 | Users and groups managed in Admin Console (product profiles per environment); synced into AEM | Cloud | M3.8 |
+| 3 | Local admin / LDAP author login not used on cloud | Cloud | 95 |
+| 4 | Developer Console "Local Development Token" (short-lived) for testing APIs | Cloud | New |
+| 5 | Developer Console "Service Credentials" (technical account) for server-to-server AEM calls | Cloud | New |
+| 6 | OAuth Server-to-Server replaces JWT credentials (JWT end of life in 2025) | All Adobe APIs | 50 |
+| 7 | Publish-side customer login: SAML 2.0 handler and OIDC handler | Cloud | 96 |
+| 8 | Closed User Groups (CUG) + user/group data sync across publish pods | Cloud | 96 |
+| 9 | Bearer token for Preview-tier OpenAPI delivery | Cloud | M7.3 |
+| 10 | App Builder actions protected with IMS (`require-adobe-auth`) | Cloud | 122 |
+| 11 | EDS site authentication (tokens for preview/live) | EDS | M6.8 |
+| 12 | CDN edge key for BYO CDN; purge keys for CDN purge | Cloud | 93, 94 |
+| 13 | Secrets in Cloud Manager secret variables, never in code | Cloud | 28 |
+| 14 | IP allowlists for author/preview/publish | Cloud | 97 |
+| 15 | Traffic filter rules, rate limiting and WAF at the edge | Cloud | 91, 98 |
+| 16 | Advanced Networking (dedicated egress IP, VPN) for back-end trust | Cloud | 13 |
+| 17 | Forms protection: reCAPTCHA Enterprise, hCaptcha, Turnstile | Cloud | 117 |
+| 18 | Universal Editor, Asset Selector and UI extensions use the author's IMS token | Cloud | 61, 106, 124 |
+
+**What to say:** identity moved to Adobe IMS for everyone who works in AEM, OAuth Server-to-Server for machines, SAML/OIDC for site visitors, and security controls moved to the edge and to Cloud Manager.
+
+### T8. Coding-related (26 points)
+
+What changed in the code you write: Java, HTL, JavaScript and configuration files.
+
+| # | Change (2020 → now) | Applies to | Cat # / See |
+| --- | --- | --- | --- |
+| 1 | OSGi config XML → `.cfg.json` with `$[env:]` / `$[secret:]` | Cloud | 38 |
+| 2 | Service users/ACLs in content packages → repoinit scripts | Cloud, LTS | 40 |
+| 3 | `getAdministrativeResourceResolver` (long gone) → service user + try-with-resources | All | M4.3 |
+| 4 | Path-bound servlets → resource-type-bound servlets (`@SlingServletResourceTypes`) | All | M4.9 |
+| 5 | Felix SCR / old annotations → OSGi DS R7 annotations with `@Designate` typed config | All | M4.9 |
+| 6 | Schedulers on every instance → Sling Jobs + `scheduler.runOn=SINGLE` | Cloud | 42 |
+| 7 | JCR observation listeners → `ResourceChangeListener` + job | All | M4.9 |
+| 8 | Copying Core Components → delegation with `@Self @Via(type = ResourceSuperType.class)` | All | 52 |
+| 9 | Generic `@Inject` → specific injectors (`@ValueMapValue`, `@OSGiService`, `@ScriptVariable`) | All | M14.8 |
+| 10 | Custom run-mode configs → Context-Aware Configuration (`@Configuration`) | All | 51 |
+| 11 | Property indexes → Lucene `-custom-n` index definitions in code | Cloud | 41 |
+| 12 | Unbounded queries → indexed, path-restricted, limited queries | Cloud | 44 |
+| 13 | Java 8 → Java 17/21 language features (records, text blocks, switch expressions, `var`) | Cloud, LTS | 46 |
+| 14 | Apache HttpClient defaults → timeouts + system proxy (`useSystemProperties()`) | Cloud | 49 |
+| 15 | Guava / Commons Collections 3 → JDK APIs | Cloud, LTS | 45 |
+| 16 | DAM workflow Java steps → Asset Compute workers (Node.js) | Cloud | 100 |
+| 17 | Custom replication agents → I/O Events + App Builder actions (Node.js) | Cloud | 123 |
+| 18 | Hand-written clientlibs → `ui.frontend` webpack/TypeScript + clientlib generator | All | 58 |
+| 19 | jQuery-style page JS → ACDL events (`adobeDataLayer.push`) for tracking | All | 60 |
+| 20 | SPA Editor React components → Universal Editor instrumentation (`data-aue-*`) | Cloud | 61, 62 |
+| 21 | HTL components for EDS sites → vanilla JS blocks (`export default function decorate(block)`) | EDS | 73 |
+| 22 | Sling Model exporter JSON for headless → GraphQL persisted queries / OpenAPI | Cloud | 82, 84 |
+| 23 | Forms scripts in rule editor → custom functions with JSDoc annotations | Cloud | M10.2 |
+| 24 | JUnit 4 / no tests → JUnit 5 + AEM Mocks with coverage gate | All | 53 |
+| 25 | Overlays of `/libs` → UI Extensibility (`@adobe/uix-guest` React extensions) | Cloud | 124 |
+| 26 | Apache rewrite/redirect logic → partly in `cdn.yaml` (redirects, headers, origin selectors) | Cloud | 90, 92 |
+
+**Before → after examples**
+
+```java
+// BEFORE (2020 style): admin resolver, never closed, path-bound servlet
+@SlingServlet(paths = "/bin/mysite/data")
+public class DataServlet extends SlingAllMethodsServlet {
+  @Reference ResourceResolverFactory f;
+  protected void doGet(...) { ResourceResolver r = f.getAdministrativeResourceResolver(null); ... }
+}
+
+// AFTER (2026): resource-type servlet, request resolver, cacheable
+@Component(service = Servlet.class)
+@SlingServletResourceTypes(resourceTypes = "mysite/components/page", selectors = "data", extensions = "json")
+public class DataServlet extends SlingSafeMethodsServlet {
+  protected void doGet(SlingHttpServletRequest req, SlingHttpServletResponse res) throws IOException {
+    var page = req.getResource();          // visitor's own permissions
+    res.setContentType("application/json");
+    res.getWriter().write("{\"title\":\"" + page.getValueMap().get("jcr:title", "") + "\"}");
+  }
+}
+```
+
+```java
+// BEFORE: scheduler runs on every publish pod
+@Component(service = Runnable.class, property = "scheduler.expression=0 0 * * * ?")
+
+// AFTER: runs once in the cluster and hands work to a Sling Job
+@Component(service = Runnable.class, property = {
+  "scheduler.expression=0 0 * * * ?", "scheduler.concurrent:Boolean=false", "scheduler.runOn=SINGLE"})
+```
+
+```java
+// BEFORE: copied Core Title code into /apps
+// AFTER: delegate and override only what changes
+@Model(adaptables = SlingHttpServletRequest.class, adapters = Title.class, resourceType = "mysite/components/title")
+public class MyTitle implements Title {
+  @Self @Via(type = ResourceSuperType.class) private Title core;
+  public String getText() { return core.getText().trim(); }
+  public String getType() { return core.getType(); }
+}
+```
+
+```js
+// BEFORE: HTL + clientlib component for a marketing site
+// AFTER (EDS): blocks/teaser/teaser.js
+export default function decorate(block) {
+  const [image, text] = [...block.children];
+  block.replaceChildren(Object.assign(document.createElement('a'), {
+    href: text.querySelector('a')?.href || '#', className: 'teaser-link' }));
+  block.firstElementChild.append(image, text);
+}
+```
+
+**What to say:** the language stack is the same (Java, Sling, OSGi, HTL), but the code is now stricter (typed config, service users, resource-type servlets, delegation), cluster-aware (jobs, statelessness), and more logic moves out of AEM into App Builder, the CDN config and front-end JavaScript.
+
+### Topic totals
+
+| Topic | Points |
+| --- | --- |
+| T1. Development | 34 |
+| T2. Sites | 24 |
+| T3. Components | 20 |
+| T4. UI | 14 |
+| T5. Authoring | 22 |
+| T6. Assets | 16 |
+| T7. Authentication and security | 18 |
+| T8. Coding | 26 |
+| **Total (with overlaps)** | **174** |
+
 ## Module 1: The big picture (2020 → 2026)
 
 AEM now ships in three forms: AEM as a Cloud Service (the strategic default), AEM 6.5 LTS (on-prem or AMS), and Edge Delivery Services (a delivery and authoring layer that comes with AEM Sites on Cloud Service). Every architecture answer in an interview should start by naming which of these you are designing for and why.
